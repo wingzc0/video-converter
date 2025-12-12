@@ -3,11 +3,6 @@ import json
 import os
 from pathlib import Path
 import time
-import threading
-from db_manager import db_manager
-from dotenv import load_dotenv
-
-load_dotenv()
 
 def get_video_info(input_path):
     """獲取影片資訊，包括解析度"""

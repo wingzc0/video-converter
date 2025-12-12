@@ -98,7 +98,7 @@ class DatabaseManager:
     def health_check(self):
         """資料庫健康檢查"""
         try:
-            with self.get_cursor() as (cursor, conn):
+            with self.get_cursor(dictionary=False) as (cursor, conn):
                 cursor.execute("SELECT 1")
                 result = cursor.fetchone()
                 return result[0] == 1
