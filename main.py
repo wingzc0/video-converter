@@ -1317,6 +1317,17 @@ def parse_arguments():
     # 其他選項
     parser.add_argument('--max-workers', type=int,
                       help='Override MAX_WORKERS setting from .env file')
+
+    # Daemon 管理（這些選項會直接控制背景 daemon，不執行轉檔）
+    daemon_group = parser.add_argument_group('Daemon 管理')
+    daemon_group.add_argument('--daemon-stop', action='store_true',
+                      help='停止所有背景 daemon（scan + process）')
+    daemon_group.add_argument('--daemon-restart', action='store_true',
+                      help='重新啟動所有背景 daemon（scan + process）')
+    daemon_group.add_argument('--daemon-status', action='store_true',
+                      help='顯示所有背景 daemon 的狀態')
+    daemon_group.add_argument('--daemon', choices=['scan', 'process', 'all'], default='all',
+                      help='指定要操作的 daemon（預設: all）')
     
     return parser.parse_args()
 
