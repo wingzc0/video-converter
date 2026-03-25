@@ -84,7 +84,7 @@ video-converter/
 │   ├── install_daemons.sh     # Bash 安裝腳本：建立 /var/run、/var/log 目錄，安裝 systemd 服務單元
 │   └── video-scanner.service  # 掃描 daemon 的 systemd 服務單元範本
 │
-└── README.txt                 # Crontab/systemd 設定範例
+└── README.md                  # 本文件
 ```
 
 ---
@@ -242,6 +242,39 @@ python main.py --no-process-pending --no-interactive
     notifempty
     create 644 www-data www-data
 }
+```
+
+---
+
+## Systemd 服務設定
+
+```ini
+[Unit]
+Description=Video Converter Service
+After=network.target mariadb.service
+
+[Service]
+Type=simple
+User=videoconverter
+Group=videoconverter
+WorkingDirectory=/path/to/video-converter
+Environment=PYTHONUNBUFFERED=1
+ExecStart=/usr/bin/python3 start_process_daemon.py --foreground
+Restart=on-failure
+RestartSec=30
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target
+```
+
+啟用服務：
+
+```bash
+sudo systemctl daemon-reload
+sudo systemctl enable video-converter.service
+sudo systemctl start video-converter.service
 ```
 
 ---
