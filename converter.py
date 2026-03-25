@@ -38,12 +38,16 @@ def convert_to_480p(input_path, output_path, progress_callback=None):
     cmd = [
         'ffmpeg',
         '-i', input_path,
+        # scale=-2:480：高度固定為 480px，寬度由 ffmpeg 自動計算並取偶數（-2）以滿足 H.264 編碼對偶數寬度的要求
         '-vf', 'scale=-2:480',  # 自動計算寬度保持比例
         '-c:v', 'libx264',      # H.264編碼
+        # crf=23：恆定品質因子，範圍 0-51，數值越小品質越高檔案越大；23 為 libx264 預設值，在品質與檔案大小之間取得良好平衡
         '-crf', '23',           # 品質參數 (18-28，值越小品質越好)
+        # preset=medium：編碼速度與壓縮率的折衷，slower 可得到更小檔案但耗時更久；批次轉檔時 medium 能兼顧速度與壓縮率
         '-preset', 'medium',    # 編碼速度/壓縮率平衡
         '-c:a', 'aac',          # 音訊編碼
         '-b:a', '128k',         # 音訊位元率
+        # +faststart：將 moov atom 移至檔案開頭，讓瀏覽器在下載完成前即可開始播放（pseudo-streaming）
         '-movflags', '+faststart',  # 網路播放優化
         '-y',                   # 覆蓋輸出檔案
         output_path
@@ -62,6 +66,8 @@ def convert_to_480p(input_path, output_path, progress_callback=None):
         )
         
         current_time = 0
+        # FFmpeg 將進度資訊寫入 stderr 而非 stdout；
+        # 逐行讀取 stderr 以解析 time= 欄位，當 readline() 回傳空字串表示子程序輸出已結束
         while True:
             line = process.stderr.readline()
             if not line:
@@ -73,6 +79,8 @@ def convert_to_480p(input_path, output_path, progress_callback=None):
                 current_time = parse_time_to_seconds(time_str)
                 
                 if duration > 0 and progress_callback:
+                    # 進度最高上限 99.9%，100% 保留給 process_task 確認輸出檔案存在後才設定，
+                    # 避免 FFmpeg 回傳成功但輸出檔案尚未完整寫入時就顯示 100%
                     progress = min(99.9, (current_time / duration) * 100)  # 保留100%給完成狀態
                     progress_callback(progress)
         
@@ -102,6 +110,8 @@ def get_video_duration(input_path):
 
 def parse_time_to_seconds(time_str):
     """將時間字串轉換為秒數 (HH:MM:SS.mmm)"""
+    # FFmpeg 輸出格式固定為 HH:MM:SS.mmm，例如 01:23:45.678；
+    # 需同時支援毫秒（小數部分），因此使用 float() 解析秒數欄位
     try:
         parts = time_str.split(':')
         if len(parts) == 3:

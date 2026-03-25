@@ -35,6 +35,8 @@ class VideoConverterService:
         self.base_output_dir = Path(os.getenv('OUTPUT_DIRECTORY', '')).resolve()
         
         # 時間限制設定
+        # ALLOWED_START_TIME / ALLOWED_END_TIME 限制轉檔只在特定時段執行（預設 22:00-06:00），
+        # 避免在白天佔用大量 CPU 資源；支援跨日設定（start > end 時視為跨越午夜）
         self.enable_time_restriction = os.getenv('ENABLE_TIME_RESTRICTION', 'true').lower() == 'true'
         self.allowed_start_time = self.parse_time(os.getenv('ALLOWED_START_TIME', '22:00'))
         self.allowed_end_time = self.parse_time(os.getenv('ALLOWED_END_TIME', '06:00'))
@@ -635,6 +637,8 @@ class VideoConverterService:
                 params.append(min(100.0, max(0.0, progress)))  # 確保進度在0-100之間
             
             if is_processing is not None:
+                # is_processing 只在 acquire_task_lock / release_task_lock 等明確的鎖操作中傳入，
+                # 一般狀態更新（更新進度、標記完成）不應修改此旗標，避免意外解鎖
                 updates.append("is_processing = %s")
                 params.append(is_processing)
             
@@ -657,31 +661,36 @@ class VideoConverterService:
             print(f"Error updating task status: {e}")
     
     def acquire_task_lock(self, task_id, worker_id):
-        """取得任務鎖"""
+        """取得任務鎖（原子操作，防止 race condition）"""
         try:
-            # 檢查任務是否可以被處理
+            # 使用單一原子 UPDATE，確保在同一個 transaction 中完成鎖定
+            # 避免 SELECT FOR UPDATE 因 execute_query 立即 commit 而鎖定失效
+            # 資料庫行級鎖保證：若兩個 worker 同時執行此 UPDATE，只有一個能使 rows_affected > 0，
+            # 另一個因 WHERE 條件不符（is_processing 已是 TRUE）而得到 rows_affected = 0
             query = '''
-            SELECT id FROM conversion_tasks 
+            UPDATE conversion_tasks
+            SET is_processing = TRUE, status = 'processing', start_time = CURRENT_TIMESTAMP
             WHERE id = %s AND status = 'pending' AND is_processing = FALSE
-            FOR UPDATE
             '''
-            result = db_manager.execute_query(query, (task_id,), fetch=True)
-            
-            if not result:
+            rows_affected = db_manager.execute_query(query, (task_id,))
+
+            if rows_affected <= 0:
                 return False
-            
-            # 取得鎖
-            query = '''
-            INSERT INTO processing_lock (task_id, worker_id)
-            VALUES (%s, %s)
-            ON DUPLICATE KEY UPDATE worker_id = VALUES(worker_id), locked_at = CURRENT_TIMESTAMP
-            '''
-            db_manager.execute_query(query, (task_id, worker_id))
-            
-            # 更新任務狀態
-            self.update_task_status(task_id, 'processing', is_processing=True)
+
+            # processing_lock 表為補充性追蹤（記錄持鎖的 worker ID），
+            # 真正的並發鎖定邏輯已由上面的原子 UPDATE 完成，此插入失敗不影響核心鎖定
+            try:
+                lock_query = '''
+                INSERT INTO processing_lock (task_id, worker_id)
+                VALUES (%s, %s)
+                ON DUPLICATE KEY UPDATE worker_id = VALUES(worker_id), locked_at = CURRENT_TIMESTAMP
+                '''
+                db_manager.execute_query(lock_query, (task_id, worker_id))
+            except Exception as e:
+                print(f"Warning: failed to insert processing_lock (non-critical): {e}")
+
             return True
-            
+
         except Exception as e:
             print(f"Error acquiring task lock: {e}")
             return False
@@ -835,7 +844,9 @@ class VideoConverterService:
         """啟動轉檔服務"""
         self.is_running = True
         
-        # 清理之前可能遺留的鎖
+        # 啟動時清除所有 processing_lock 記錄：若上次執行異常終止，
+        # is_processing 旗標已由 process_daemon.run() 中的孤兒清理邏輯重設，
+        # 這裡只需清除補充性的 lock 追蹤表
         query = "DELETE FROM processing_lock"
         db_manager.execute_query(query)
         
@@ -847,6 +858,7 @@ class VideoConverterService:
         for i in range(self.max_workers):
             worker_id = f"worker_{i}"
             thread = threading.Thread(target=self.worker, args=(worker_id,))
+            # daemon=True：主執行緒結束時（task_queue.join() 返回後）worker 自動終止
             thread.daemon = True
             thread.start()
             self.worker_threads.append(thread)

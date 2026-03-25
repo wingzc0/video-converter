@@ -146,13 +146,17 @@ class DaemonMonitor:
             
             # 檢查行程是否存在
             try:
+                # os.kill(pid, 0) 不發送任何信號，只檢查目標行程是否存在且有權限發送信號；
+                # 若行程不存在會拋出 OSError(ESRCH)，若無權限則拋出 OSError(EPERM)
                 os.kill(pid, 0)  # 不會發送信號，只檢查是否存在
                 # 獲取 uptime
                 uptime = 0
                 try:
                     with open(f'/proc/{pid}/stat', 'r') as f:
                         stat = f.read().split()
-                        # 第 22 欄位是啟動時間（以 clock ticks 為單位）
+                        # /proc/[pid]/stat 第 22 欄位（索引 21）是行程啟動時間，
+                        # 單位為從系統開機起算的 clock ticks（非 Unix timestamp），
+                        # 需除以 SC_CLK_TCK 才能換算成秒數
                         start_time_ticks = int(stat[21])
                         clock_ticks_per_second = os.sysconf(os.sysconf_names['SC_CLK_TCK'])
                         start_time_seconds = start_time_ticks / clock_ticks_per_second
@@ -402,6 +406,8 @@ class DaemonMonitor:
             return
         
         # 確保所有數值都是數字類型
+        # safe_int 的必要性：資料庫的 SUM()/COUNT() 可能回傳 Decimal 或 None 型別，
+        # 直接傳給字串格式化或算術運算會導致 TypeError；透過 float() 中間轉換可同時處理 Decimal 和數值字串
         def safe_int(value, default=0):
             try:
                 return int(float(value)) if value is not None else default
@@ -456,10 +462,13 @@ class DaemonMonitor:
         percentage = progress * 100
         
         if percentage < 30:
+            # 低於 30%：以紅色警示進度嚴重落後
             color = self.get_color('red')
         elif percentage < 70:
+            # 30-70%：以黃色表示進行中
             color = self.get_color('yellow')
         else:
+            # 70% 以上：以綠色表示接近完成
             color = self.get_color('green')
         
         return f"{color}[{bar}] {percentage:.1f}%{self.get_color('reset')}"

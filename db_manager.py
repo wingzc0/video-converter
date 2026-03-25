@@ -26,8 +26,11 @@ class DatabaseManager:
                 'charset': 'utf8mb4',
                 'collation': 'utf8mb4_unicode_ci',
                 'pool_name': 'video_conversion_pool',
+                # pool_size=5：掃描、處理、API 伺服器各自需要連線，5 個足夠同時服務多執行緒而不超出資料庫上限
                 'pool_size': 5,
                 'pool_reset_session': True,
+                # autocommit=False：所有操作需明確 commit，確保原子性；
+                # execute_query 執行後立即 commit，所以不適合用來執行需跨語句的 SELECT FOR UPDATE
                 'autocommit': False
             }
             
@@ -71,6 +74,9 @@ class DatabaseManager:
                 cursor.execute(query, params or ())
                 if fetch:
                     result = cursor.fetchall()
+                    # SELECT 完成後立即 commit，釋放所有隱式鎖
+                    # 重要限制：此方法不得用於 SELECT FOR UPDATE，
+                    # 因為 commit 後行鎖會立即釋放，無法保護後續的寫入操作
                     conn.commit()
                     return result
                 else:
@@ -83,6 +89,8 @@ class DatabaseManager:
     
     def execute_transaction(self, queries):
         """執行交易"""
+        # 需要多語句原子操作時（如：先 UPDATE 再 INSERT），應使用此方法而非多次呼叫 execute_query；
+        # execute_query 每次呼叫都各自 commit，無法保證跨語句的原子性
         with self.get_connection() as conn:
             cursor = conn.cursor()
             try:

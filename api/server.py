@@ -37,6 +37,8 @@ class APIServer:
         self.last_process_update = 0
         
         # 狀態更新設定
+        # 快取 TTL 1 秒：WebSocket broadcast 每 2 秒推送一次，
+        # 1 秒 TTL 確保每次廣播都能讀到最新狀態，同時避免每次廣播都觸發磁碟 I/O
         self.status_cache_ttl = 1  # 狀態快取 TTL (秒)
         self.is_running = False
         self.status_thread = None
@@ -91,6 +93,8 @@ class APIServer:
             current_time = time.time()
             
             # 如果檔案太舊，視為無效
+            # 60 秒 TTL：daemon 每 10 秒更新一次狀態檔案；
+            # 若超過 60 秒未更新，表示 daemon 已崩潰或停止，應視狀態為不可用而非顯示過期資訊
             if current_time - file_mtime > 60:  # 60秒內的檔案才有效
                 self.logger.warning(f"Status file is too old: {file_path} (modified {current_time - file_mtime:.1f} seconds ago)")
                 return None
@@ -189,6 +193,9 @@ class APIServer:
     
     def broadcast_status(self):
         """定期廣播狀態"""
+        # 此執行緒由 start() 啟動，設為 daemon=True，主執行緒（Flask）結束時自動終止
+        # 廣播的事件名稱：scan_progress、process_progress、system_status、task_stats、all_progress；
+        # 狀態資料來自 JSON 檔案而非直接查詢 daemon，解耦 API 伺服器與 daemon 內部實作
         while self.is_running:
             try:
                 scan_status = self.get_cached_scan_status()
@@ -213,7 +220,7 @@ class APIServer:
                 
                 self.logger.debug(f"Status broadcast completed at {datetime.now().isoformat()}")
                 
-                time.sleep(2)  # 每2秒廣播一次
+                time.sleep(2)  # 每2秒廣播一次：頻率足夠讓前端即時顯示，又不會對資料庫或磁碟造成過大壓力
             
             except Exception as e:
                 self.logger.error(f"Error in broadcast loop: {e}")

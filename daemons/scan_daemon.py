@@ -74,7 +74,8 @@ class ScanDaemon(BaseDaemon):
                     if file_ext not in self.supported_extensions:
                         continue
                     
-                    # 檢查檔案是否已存在於資料庫
+                    # 先查詢資料庫確認此路徑是否已有記錄，避免對已知檔案重複呼叫 ffprobe；
+                    # ffprobe 需讀取整個影片 header，對大量檔案而言是顯著的效能瓶頸
                     query = "SELECT id FROM conversion_tasks WHERE input_path = %s LIMIT 1"
                     result = db_manager.execute_query(query, (str(file_path),), fetch=True)
                     
@@ -88,23 +89,30 @@ class ScanDaemon(BaseDaemon):
                             continue
                         
                         width, height = map(int, video_info['resolution'].split('x'))
+                        # 以 height 判斷是否需要轉換：影片解析度標準（480p、720p、1080p）皆以高度為基準；
+                        # 若 height < min_resolution（預設 481），表示已是 480p 或更低，無需轉換
                         if height < self.min_resolution:
                             continue
-                        
-                        # 添加到資料庫
+
+                        # 計算輸出路徑
                         relative_path = file_path.relative_to(self.base_input_dir)
                         output_dir = self.base_output_dir / relative_path.parent
                         output_dir.mkdir(parents=True, exist_ok=True)
                         output_path = output_dir / f"480p_{filename}"
-                        
+
+                        # 使用 INSERT IGNORE 防止 TOCTOU race condition：
+                        # 若兩個 scan 程序同時掃到同一個檔案，不會因 UNIQUE 限制而拋出例外
                         query = '''
-                        INSERT INTO conversion_tasks 
+                        INSERT IGNORE INTO conversion_tasks 
                         (input_path, output_path, source_resolution, status)
                         VALUES (%s, %s, %s, 'pending')
                         '''
-                        db_manager.execute_query(query, (str(file_path), str(output_path), video_info['resolution']))
-                        
-                        self.scan_progress['tasks_added'] += 1
+                        rows = db_manager.execute_query(query, (str(file_path), str(output_path), video_info['resolution']))
+
+                        # rows=0 表示 INSERT IGNORE 遇到 UNIQUE 衝突而靜默忽略（另一個 scan 已先插入），
+                        # 不應計入本次新增的任務數
+                        if rows > 0:
+                            self.scan_progress['tasks_added'] += 1
                         
                     except Exception as e:
                         error_msg = f"Error processing {file_path}: {str(e)}"
@@ -122,7 +130,9 @@ class ScanDaemon(BaseDaemon):
     
     def should_ignore_path(self, path):
         """檢查路徑是否應該被忽略"""
-        # 實作忽略邏輯，這裡簡化
+        # 注意限制：此處以字串前綴比對，若 ignore_dir 未以路徑分隔符結尾，
+        # 可能誤匹配名稱相似但不同的目錄（例如 /data/out 會匹配 /data/output）；
+        # main.py 的 should_ignore_path 使用更嚴謹的 Path.relative_to 比對
         ignore_dirs = os.getenv('IGNORE_DIRECTORIES', '').split(',')
         for ignore_dir in ignore_dirs:
             if ignore_dir and str(path).startswith(ignore_dir):

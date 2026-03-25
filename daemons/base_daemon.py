@@ -34,11 +34,14 @@ class BaseDaemon(ABC):
         self.daemon_context = None
         self.logger = self.setup_logger()
         
-        # 設定信號處理
+        # SIGTERM/SIGINT 皆導向 handle_shutdown，將 is_running 設為 False；
+        # 主迴圈下一次迭代偵測到 is_running=False 後會自行結束，實現優雅停機而非強制中止
         signal.signal(signal.SIGTERM, self.handle_shutdown)
         signal.signal(signal.SIGINT, self.handle_shutdown)
 
         # 狀態檔案設定
+        # 狀態以 JSON 檔案寫出，供 API 伺服器讀取，避免 daemon 與 API 伺服器之間的直接耦合；
+        # API 伺服器不需知道 daemon 內部實作，只需讀取固定路徑的 JSON 即可取得最新狀態
         self.status_file = os.getenv(f'{name.upper()}_STATUS_FILE', f"/var/run/video-converter/{name}_status.json")
         self.status_update_interval = int(os.getenv(f'{name.upper()}_STATUS_UPDATE_INTERVAL', '10'))  # 預設10秒更新一次
         self.status_thread = None
@@ -253,13 +256,20 @@ class BaseDaemon(ABC):
                 stderr=open(self.stderr_log_file, 'a+'),
                 working_directory=os.getcwd(),
                 umask=0o002,
+                # files_preserve=[]：明確指定不需保留的額外檔案描述符；
+                # DaemonContext 在 double-fork 後會關閉所有非必要的 fd，
+                # 若有需要跨 fork 保留的 fd（如 socket）應在此列出，避免它們被意外關閉
                 files_preserve=[],
+                # signal_map 在 DaemonContext 進入後重新綁定信號，
+                # 因為 double-fork 後原本在父行程設定的 signal handler 可能已失效
                 signal_map={
                     signal.SIGTERM: self.handle_shutdown,
                     signal.SIGINT: self.handle_shutdown,
                 }
             )
             
+            # DaemonContext.__enter__ 執行 double-fork daemonization：
+            # 第一次 fork 脫離終端，第二次 fork 確保 daemon 不是 session leader，防止重新獲取 tty
             with self.daemon_context:
                 self.logger.info(f"{self.name} daemon started with PID: {os.getpid()}")
                 self.is_running = True

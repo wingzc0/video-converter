@@ -46,6 +46,9 @@ class ProcessDaemon(BaseDaemon):
     def get_pending_tasks(self):
         """獲取待處理的任務"""
         try:
+            # 只取 status='pending' 且 is_processing=FALSE 的任務；
+            # is_processing=TRUE 表示已有 worker 正在處理（或上次崩潰留下的孤兒旗標），
+            # 必須在 run() 啟動時先清理孤兒旗標，否則這些任務永遠不會被取出
             query = '''
             SELECT id, input_path, output_path, source_resolution
             FROM conversion_tasks 
@@ -62,9 +65,13 @@ class ProcessDaemon(BaseDaemon):
     def update_task_status(self, task_id, status, progress=None, error_message=None):
         """更新任務狀態"""
         try:
-            updates = ['status = %s']
-            params = [status]
-            
+            updates = []
+            params = []
+
+            if status:
+                updates.append('status = %s')
+                params.append(status)
+
             if progress is not None:
                 updates.append('progress = %s')
                 params.append(min(100.0, max(0.0, progress)))
@@ -75,7 +82,11 @@ class ProcessDaemon(BaseDaemon):
             
             if status in ['completed', 'failed']:
                 updates.append('end_time = CURRENT_TIMESTAMP')
-            
+
+            if not updates:
+                # updates 為空表示呼叫者未傳入任何要更新的欄位，跳過 UPDATE 避免執行空語句
+                return
+
             query = f"UPDATE conversion_tasks SET {', '.join(updates)} WHERE id = %s"
             params.append(task_id)
             
@@ -87,6 +98,10 @@ class ProcessDaemon(BaseDaemon):
     def acquire_task_lock(self, task_id, worker_id):
         """取得任務鎖"""
         try:
+            # 原子性 UPDATE：WHERE 子句同時檢查 status='pending' 和 is_processing=FALSE，
+            # 資料庫的行級鎖保證同一時間只有一個 UPDATE 能成功修改同一列；
+            # 若另一個 worker 同時執行相同的 UPDATE，其中一個的 rows_affected 會是 0，
+            # 從而安全地排除競爭條件，無需額外的應用層鎖
             query = '''
             UPDATE conversion_tasks 
             SET is_processing = TRUE, start_time = CURRENT_TIMESTAMP
@@ -188,6 +203,9 @@ class ProcessDaemon(BaseDaemon):
             if pending_tasks:
                 self.logger.info(f"Found {len(pending_tasks)} pending tasks")
                 for task in pending_tasks:
+                    # 主執行緒負責將任務 ID 放入 task_queue，
+                    # worker 執行緒從 queue 取出後再各自競爭 acquire_task_lock，
+                    # 確保每個任務只被一個 worker 實際執行
                     self.task_queue.put(task['id'])
             
             self.processing_progress['status'] = 'processing'
@@ -204,12 +222,22 @@ class ProcessDaemon(BaseDaemon):
     def run(self):
         """執行處理 daemon"""
         self.logger.info("Process daemon started")
-        
+
+        # 清理上次崩潰留下的孤兒 is_processing 旗標，避免這些任務永遠無法被處理
+        try:
+            query = "UPDATE conversion_tasks SET is_processing = FALSE WHERE status = 'pending' AND is_processing = TRUE"
+            cleaned = db_manager.execute_query(query)
+            if cleaned:
+                self.logger.info(f"Cleaned up {cleaned} orphaned is_processing flag(s) from previous run")
+        except Exception as e:
+            self.logger.error(f"Error cleaning up orphaned tasks: {str(e)}")
+
         # 建立工作執行緒
         for i in range(self.max_workers):
             worker_id = f"worker_{i}"
             self.worker_locks[worker_id] = threading.Lock()
             thread = threading.Thread(target=self.worker, args=(worker_id,))
+            # daemon=True：主執行緒結束時 worker 執行緒自動終止，不需要額外的 join 或停止邏輯
             thread.daemon = True
             thread.start()
             self.worker_threads.append(thread)
