@@ -76,8 +76,8 @@ video-converter/
 │                              #   顯示 daemon PID/運行時間、掃描/處理進度、任務統計、進度條
 │                              #   支援持續監控（-c）與單次顯示兩種模式
 │
-├── start_scan_daemon.py       # 啟動腳本：啟動 ScanDaemon（背景或 --foreground 前景模式）
-├── start_process_daemon.py    # 啟動腳本：啟動 ProcessDaemon（背景或 --foreground 前景模式）
+├── start_scan_daemon.py       # 管理腳本：ScanDaemon 的 start/stop/restart/status
+├── start_process_daemon.py    # 管理腳本：ProcessDaemon 的 start/stop/restart/status
 ├── start_api_server.py        # 啟動腳本：啟動 Flask API 伺服器
 │
 ├── scripts/
@@ -159,12 +159,48 @@ video-converter/
 
 ### 方式一：長駐 Daemon 程序（建議方式）
 
-以 `start_*.py` 啟動三個獨立程序：
+每個管理腳本均支援 `start`（預設）、`stop`、`restart`、`status` 四個子指令：
 
 ```bash
+# 啟動
 python3 start_scan_daemon.py
 python3 start_process_daemon.py
 python3 start_api_server.py --foreground &
+
+# 停止
+python3 start_scan_daemon.py stop
+python3 start_process_daemon.py stop
+
+# 重新啟動
+python3 start_scan_daemon.py restart
+python3 start_process_daemon.py restart
+
+# 查看狀態
+python3 start_scan_daemon.py status
+python3 start_process_daemon.py status
+```
+
+**`status` 輸出範例：**
+
+```
+✅ scan_daemon: running (PID: 43003)
+   Last scan  : 2026-03-25T18:07:14
+   Files scan : 106091
+   Tasks added: 0
+   Errors     : 0
+
+✅ process_daemon: running (PID: 43012)
+   Last check : 2026-03-25T18:06:42
+   Processing : 668  |  Queue: 664
+   Completed  : 135  |  Failed: 0
+   Workers    : 1/1  |  Errors: 0
+```
+
+所有子指令也支援 `--foreground`（或 `-f`）旗標，在前景執行（適合除錯或 systemd 管理）：
+
+```bash
+python3 start_scan_daemon.py start --foreground
+python3 start_process_daemon.py restart -f
 ```
 
 ### 方式二：即時監控
@@ -197,6 +233,10 @@ python monitor_daemons.py -c
 | `--verbose` | 詳細輸出，顯示每個檔案的處理過程 |
 | `--quiet` | 安靜模式，只顯示錯誤訊息 |
 | `--max-workers N` | 覆蓋 `.env` 中的 `MAX_WORKERS` 設定 |
+| `--daemon-stop` | 停止所有背景 daemon（scan + process） |
+| `--daemon-restart` | 重新啟動所有背景 daemon（scan + process） |
+| `--daemon-status` | 顯示所有背景 daemon 的狀態 |
+| `--daemon [scan\|process\|all]` | 指定要操作的 daemon（預設：all） |
 
 ---
 
