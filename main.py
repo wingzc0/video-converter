@@ -26,7 +26,8 @@ class VideoConverterService:
             process_only=False,
             no_interactive=False,
             force=False,
-            verbose=False
+            verbose=False,
+            process_pending=True  # 預設處理 pending 任務
         )
         
         # 從 .env 讀取路徑
@@ -68,6 +69,122 @@ class VideoConverterService:
         if not db_manager.health_check():
             raise Exception("Database connection failed")
     
+    def process_pending_tasks(self):
+        """
+        處理資料庫中狀態為 pending 的任務
+        
+        Returns:
+            int: 加入佇列的 pending 任務數量
+        """
+        if not self.args.process_pending:
+            if self.args.verbose:
+                print("⏭️  Skipping processing of pending tasks (disabled by argument)")
+            return 0
+        
+        try:
+            # 查詢所有 pending 且未被處理的任務
+            query = '''
+            SELECT id, input_path, output_path, source_resolution
+            FROM conversion_tasks 
+            WHERE status = 'pending' 
+            AND is_processing = FALSE
+            ORDER BY created_at ASC
+            '''
+            
+            pending_tasks = db_manager.execute_query(query, fetch=True)
+            
+            if not pending_tasks:
+                if self.args.verbose:
+                    print("📭 No pending tasks found in database")
+                return 0
+            
+            print(f"\n🔄 Found {len(pending_tasks)} pending tasks in database")
+            
+            processed_count = 0
+            skipped_count = 0
+            
+            for task in pending_tasks:
+                task_id = task['id']
+                input_path = task['input_path']
+                output_path = task['output_path']
+                
+                try:
+                    # 檢查輸入檔案是否存在
+                    if not os.path.exists(input_path):
+                        error_msg = f"Input file not found: {input_path}"
+                        self.update_task_status(task_id, 'failed', error_message=error_msg)
+                        if self.args.verbose:
+                            print(f"  ❌ Task {task_id}: {error_msg}")
+                        skipped_count += 1
+                        continue
+                    
+                    # 檢查輸出目錄是否可寫
+                    output_dir = Path(output_path).parent
+                    if not output_dir.exists():
+                        output_dir.mkdir(parents=True, exist_ok=True)
+                    
+                    if not os.access(output_dir, os.W_OK):
+                        error_msg = f"Output directory not writable: {output_dir}"
+                        self.update_task_status(task_id, 'failed', error_message=error_msg)
+                        if self.args.verbose:
+                            print(f"  ❌ Task {task_id}: {error_msg}")
+                        skipped_count += 1
+                        continue
+                    
+                    # 重新檢查檔案是否應該被跳過
+                    skip, reason = self.should_skip_file(input_path)
+                    if skip:
+                        error_msg = f"File should be skipped: {reason}"
+                        self.update_task_status(task_id, 'failed', error_message=error_msg)
+                        if self.args.verbose:
+                            print(f"  ❌ Task {task_id}: {error_msg}")
+                        skipped_count += 1
+                        continue
+                    
+                    # 檢查解析度
+                    if self.args.skip_low_resolution:
+                        video_info = get_video_info(input_path)
+                        if video_info:
+                            try:
+                                width, height = map(int, video_info['resolution'].split('x'))
+                                if height < self.min_resolution:
+                                    error_msg = f"File has low resolution: {video_info['resolution']}, required: {self.min_resolution}p"
+                                    self.update_task_status(task_id, 'failed', error_message=error_msg)
+                                    if self.args.verbose:
+                                        print(f"  ❌ Task {task_id}: {error_msg}")
+                                    skipped_count += 1
+                                    continue
+                            except (ValueError, AttributeError):
+                                if self.args.verbose:
+                                    print(f"  ⚠️  Task {task_id}: Could not parse resolution for {input_path}")
+                    
+                    # 將任務加入佇列
+                    self.task_queue.put(task_id)
+                    processed_count += 1
+                    
+                    if self.args.verbose:
+                        print(f"  ✅ Task {task_id} added to queue: {input_path} -> {output_path}")
+                
+                except Exception as e:
+                    error_msg = f"Error processing pending task {task_id}: {str(e)}"
+                    self.update_task_status(task_id, 'failed', error_message=error_msg)
+                    if self.args.verbose:
+                        print(f"  ❌ Task {task_id}: {error_msg}")
+                    skipped_count += 1
+            
+            print(f"✅ Processed {processed_count} pending tasks")
+            if skipped_count > 0:
+                print(f"⏭️  Skipped {skipped_count} pending tasks due to errors")
+            
+            return processed_count
+            
+        except Exception as e:
+            print(f"❌ Error processing pending tasks: {e}")
+            if self.args.verbose:
+                import traceback
+                traceback.print_exc()
+            return 0
+   
     def parse_ignore_directories(self, ignore_dirs_str):
         """解析忽略目錄字串為 Path 物件列表"""
         if not ignore_dirs_str.strip():
@@ -619,13 +736,6 @@ class VideoConverterService:
                                       error_message=f"Output directory not writable: {output_dir}")
                 return False
             
-            # 檢查輸出目錄是否在輸入目錄下（再次確認）
-            if self.is_subdirectory(output_dir, self.base_input_dir):
-                error_msg = f"Output directory {output_dir} is inside input directory {self.base_input_dir}"
-                self.update_task_status(task_id, 'failed', error_message=error_msg)
-                print(f"Task {task_id} failed: {error_msg}")
-                return False
-            
             # 取得任務鎖
             if not self.acquire_task_lock(task_id, worker_id):
                 print(f"Could not acquire lock for task {task_id}")
@@ -655,13 +765,15 @@ class VideoConverterService:
                 # 更新最終狀態
                 if success:
                     self.update_task_status(task_id, 'completed', progress=100.0)
-                    print(f"✓ Task {task_id} completed successfully")
-                    print(f"  Output: {output_path}")
-                    print(f"  File size: {os.path.getsize(output_path) / 1024 / 1024:.2f} MB")
+                    if self.args.verbose:
+                        print(f"✓ Task {task_id} completed successfully")
+                        print(f"  Output: {output_path}")
+                        print(f"  File size: {os.path.getsize(output_path) / 1024 / 1024:.2f} MB")
                 else:
                     error_msg = error_msg if 'error_msg' in locals() else "Conversion failed"
                     self.update_task_status(task_id, 'failed', error_message=error_msg)
-                    print(f"✗ Task {task_id} failed: {error_msg}")
+                    if self.args.verbose:
+                        print(f"✗ Task {task_id} failed: {error_msg}")
                 
                 return success
                 
@@ -727,6 +839,10 @@ class VideoConverterService:
         query = "DELETE FROM processing_lock"
         db_manager.execute_query(query)
         
+        # 處理 pending 任務
+        if self.args.process_pending:
+            self.process_pending_tasks()
+        
         # 建立工作執行緒
         for i in range(self.max_workers):
             worker_id = f"worker_{i}"
@@ -747,6 +863,7 @@ class VideoConverterService:
             
             print(f"Supported extensions: {', '.join(self.supported_extensions)}")
             print(f"Minimum resolution for conversion: {self.min_resolution}p")
+            print(f"Processing pending tasks: {'✅ Enabled' if self.args.process_pending else '❌ Disabled'}")
     
     def stop(self):
         """停止轉檔服務"""
@@ -764,7 +881,153 @@ class VideoConverterService:
         
         if self.args.verbose:
             print("Video converter service stopped")
+
+    def retry_failed_tasks(self, max_retries=3):
+        """
+        重試失敗的任務
+        
+        Args:
+            max_retries: 最大重試次數
+            
+        Returns:
+            int: 重試的任務數量
+        """
+        try:
+            # 查詢失敗的任務，按失敗次數排序
+            query = '''
+            SELECT id, input_path, output_path, error_message,
+                   COALESCE(retry_count, 0) as retry_count
+            FROM conversion_tasks 
+            WHERE status = 'failed'
+            AND COALESCE(retry_count, 0) < %s
+            ORDER BY retry_count ASC, created_at ASC
+            LIMIT 100
+            '''
+            
+            failed_tasks = db_manager.execute_query(query, (max_retries,), fetch=True)
+            
+            if not failed_tasks:
+                if self.args.verbose:
+                    print("📭 No failed tasks available for retry")
+                return 0
+            
+            print(f"\n🔄 Found {len(failed_tasks)} failed tasks available for retry")
+            
+            retried_count = 0
+            
+            for task in failed_tasks:
+                task_id = task['id']
+                retry_count = task['retry_count'] + 1
+                
+                try:
+                    # 更新重試次數和狀態
+                    query = '''
+                    UPDATE conversion_tasks 
+                    SET status = 'pending', 
+                        is_processing = FALSE,
+                        retry_count = %s,
+                        error_message = CONCAT('Retry #', %s, ': ', error_message)
+                    WHERE id = %s
+                    '''
+                    db_manager.execute_query(query, (retry_count, retry_count, task_id))
+                    
+                    # 將任務加入佇列
+                    self.task_queue.put(task_id)
+                    retried_count += 1
+                    
+                    if self.args.verbose:
+                        print(f"  🔄 Task {task_id} marked for retry (attempt #{retry_count})")
+                
+                except Exception as e:
+                    print(f"  ❌ Error retrying task {task_id}: {e}")
+            
+            if retried_count > 0:
+                print(f"✅ {retried_count} failed tasks marked for retry")
+            
+            return retried_count
+            
+        except Exception as e:
+            print(f"❌ Error retrying failed tasks: {e}")
+            if self.args.verbose:
+                import traceback
+                traceback.print_exc()
+            return 0
     
+    def cleanup_stale_tasks(self, hours=24):
+        """
+        清理過時的任務（長時間未完成的任務）
+        
+        Args:
+            hours: 視為過時的小時數
+            
+        Returns:
+            int: 清理的任務數量
+        """
+        try:
+            # 計算過時時間
+            stale_time = datetime.now() - timedelta(hours=hours)
+            
+            # 查詢過時的處理中任務
+            query = '''
+            SELECT id, input_path, status
+            FROM conversion_tasks 
+            WHERE status = 'processing'
+            AND (start_time IS NULL OR start_time < %s)
+            AND is_processing = TRUE
+            '''
+            
+            stale_tasks = db_manager.execute_query(query, (stale_time.strftime('%Y-%m-%d %H:%M:%S'),), fetch=True)
+            
+            if not stale_tasks:
+                if self.args.verbose:
+                    print(f"📭 No stale tasks found (older than {hours} hours)")
+                return 0
+            
+            print(f"\n🧹 Found {len(stale_tasks)} stale tasks (older than {hours} hours)")
+            
+            cleaned_count = 0
+            
+            for task in stale_tasks:
+                task_id = task['id']
+                task_status = task['status']
+                
+                try:
+                    # 更新為失敗狀態
+                    error_msg = f"Task marked as stale after {hours} hours (was {task_status})"
+                    query = '''
+                    UPDATE conversion_tasks 
+                    SET status = 'failed',
+                        is_processing = FALSE,
+                        error_message = %s,
+                        end_time = CURRENT_TIMESTAMP
+                    WHERE id = %s
+                    '''
+                    db_manager.execute_query(query, (error_msg, task_id))
+                    
+                    # 清理鎖
+                    query = "DELETE FROM processing_lock WHERE task_id = %s"
+                    db_manager.execute_query(query, (task_id,))
+                    
+                    cleaned_count += 1
+                    
+                    if self.args.verbose:
+                        print(f"  🧹 Task {task_id} cleaned up: {error_msg}")
+                
+                except Exception as e:
+                    print(f"  ❌ Error cleaning up task {task_id}: {e}")
+            
+            if cleaned_count > 0:
+                print(f"✅ {cleaned_count} stale tasks cleaned up")
+            
+            return cleaned_count
+            
+        except Exception as e:
+            print(f"❌ Error cleaning up stale tasks: {e}")
+            if self.args.verbose:
+                import traceback
+                traceback.print_exc()
+            return 0
+   
     def get_task_status(self, task_id):
         """獲取任務狀態"""
         try:
@@ -1011,6 +1274,18 @@ def parse_arguments():
     group.add_argument('--process-only', action='store_true', 
                       help='Only process existing tasks in database, do not scan new files')
     
+    # 任務處理選項
+    parser.add_argument('--process-pending', action='store_true', default=True,
+                      help='Process pending tasks from database (default: enabled)')
+    parser.add_argument('--no-process-pending', action='store_false', dest='process_pending',
+                      help='Do not process pending tasks from database')
+    parser.add_argument('--retry-failed', action='store_true',
+                      help='Retry failed tasks (up to 3 attempts)')
+    parser.add_argument('--cleanup-stale', action='store_true',
+                      help='Clean up stale tasks (older than 24 hours)')
+    parser.add_argument('--stale-hours', type=int, default=24,
+                      help='Hours threshold for stale tasks (default: 24)')
+    
     # 執行控制
     parser.add_argument('--no-interactive', action='store_true',
                       help='Run in non-interactive mode (no confirmation prompts)')
@@ -1050,6 +1325,14 @@ def main():
         # 如果指定了 --max-workers，覆蓋設定
         if args.max_workers is not None:
             converter.max_workers = args.max_workers
+        
+        # 清理過時任務
+        if args.cleanup_stale:
+            converter.cleanup_stale_tasks(args.stale_hours)
+        
+        # 重試失敗的任務
+        if args.retry_failed:
+            converter.retry_failed_tasks()
         
         # 顯示目錄結構預覽（僅在互動模式下）
         if not args.no_interactive:
@@ -1103,11 +1386,13 @@ def main():
                         
                         # 顯示任務狀態
                         query = '''
-                        SELECT COUNT(*) as total,
-                               SUM(CASE WHEN status = 'pending' THEN 1 ELSE 0 END) as pending,
-                               SUM(CASE WHEN status = 'processing' THEN 1 ELSE 0 END) as processing,
-                               SUM(CASE WHEN status = 'completed' THEN 1 ELSE 0 END) as completed,
-                               SUM(CASE WHEN status = 'failed' THEN 1 ELSE 0 END) as failed
+                        SELECT 
+                            COUNT(*) as total,
+                            SUM(CASE WHEN status = 'pending' THEN 1 ELSE 0 END) as pending,
+                            SUM(CASE WHEN status = 'processing' THEN 1 ELSE 0 END) as processing,
+                            SUM(CASE WHEN status = 'completed' THEN 1 ELSE 0 END) as completed,
+                            SUM(CASE WHEN status = 'failed' THEN 1 ELSE 0 END) as failed,
+                            SUM(CASE WHEN retry_count > 0 THEN 1 ELSE 0 END) as retried
                         FROM conversion_tasks
                         '''
                         result = db_manager.execute_query(query, fetch=True)
@@ -1118,7 +1403,8 @@ def main():
                                         f"Pending: {stats['pending']}, "
                                         f"Processing: {stats['processing']}, "
                                         f"Completed: {stats['completed']}, "
-                                        f"Failed: {stats['failed']}")
+                                        f"Failed: {stats['failed']}, "
+                                        f"Retried: {stats['retried']}")
                             
                             if not args.quiet:
                                 print(f"\r{time_info} | {status_str}", end='', flush=True)
@@ -1147,10 +1433,14 @@ def main():
         
         # 顯示最終統計
         query = '''
-        SELECT COUNT(*) as total,
-               SUM(CASE WHEN status = 'completed' THEN 1 ELSE 0 END) as completed,
-               SUM(CASE WHEN status = 'failed' THEN 1 ELSE 0 END) as failed
+        SELECT 
+            COUNT(*) as total,
+            SUM(CASE WHEN status = 'completed' THEN 1 ELSE 0 END) as completed,
+            SUM(CASE WHEN status = 'failed' THEN 1 ELSE 0 END) as failed,
+            SUM(CASE WHEN retry_count > 0 THEN 1 ELSE 0 END) as retried,
+            AVG(TIMESTAMPDIFF(SECOND, start_time, end_time)) as avg_duration
         FROM conversion_tasks
+        WHERE status IN ('completed', 'failed')
         '''
         result = db_manager.execute_query(query, fetch=True)
         
@@ -1160,40 +1450,66 @@ def main():
             print(f"Total tasks: {stats['total']}")
             print(f"Successfully completed: {stats['completed']}")
             print(f"Failed: {stats['failed']}")
+            print(f"Retried tasks: {stats['retried'] or 0}")
+            if stats['avg_duration']:
+                avg_minutes = float(stats['avg_duration']) / 60
+                print(f"Average processing time: {avg_minutes:.1f} minutes")
             
             if stats['failed'] > 0:
-                print("\n❌ Failed tasks:")
-                query = "SELECT id, input_path, output_path, error_message FROM conversion_tasks WHERE status = 'failed'"
+                print("\n❌ Failed tasks details:")
+                query = """
+                SELECT id, input_path, output_path, error_message, 
+                       retry_count, created_at, updated_at
+                FROM conversion_tasks 
+                WHERE status = 'failed'
+                ORDER BY updated_at DESC
+                LIMIT 10
+                """
                 failed_tasks = db_manager.execute_query(query, fetch=True)
                 for task in failed_tasks:
                     print(f"\nTask ID {task['id']}:")
                     print(f"  Input:  {task['input_path']}")
                     print(f"  Output: {task['output_path']}")
                     print(f"  Error:  {task['error_message']}")
+                    print(f"  Retries: {task['retry_count'] or 0}")
+                    print(f"  Created: {task['created_at']}")
+                    print(f"  Updated: {task['updated_at']}")
         
         # 顯示成功的轉檔結果預覽
         if not args.quiet:
             print("\n✅ Successful conversions preview:")
             try:
-                successful_tasks = db_manager.execute_query("""
-                    SELECT input_path, output_path 
-                    FROM conversion_tasks 
-                    WHERE status = 'completed' 
-                    ORDER BY id DESC 
-                    LIMIT 5
-                """, fetch=True)
+                query = """
+                SELECT id, input_path, output_path, source_resolution,
+                       created_at, updated_at
+                FROM conversion_tasks 
+                WHERE status = 'completed' 
+                ORDER BY updated_at DESC 
+                LIMIT 5
+                """
+                successful_tasks = db_manager.execute_query(query, fetch=True)
                 
                 if successful_tasks:
                     for i, task in enumerate(successful_tasks, 1):
                         input_path = Path(task['input_path'])
                         output_path = Path(task['output_path'])
-                        relative_input = input_path.relative_to(converter.base_input_dir)
-                        relative_output = output_path.relative_to(converter.base_output_dir)
                         
-                        print(f"\n{i}. Input:  {relative_input}")
+                        try:
+                            relative_input = input_path.relative_to(converter.base_input_dir)
+                            relative_output = output_path.relative_to(converter.base_output_dir)
+                        except ValueError:
+                            relative_input = input_path
+                            relative_output = output_path
+                        
+                        print(f"\n{i}. Task ID: {task['id']}")
+                        print(f"   Input:  {relative_input}")
                         print(f"   Output: {relative_output}")
+                        print(f"   Resolution: {task['source_resolution']} → 480p")
+                        print(f"   Completed: {task['updated_at']}")
+                        
                         if output_path.exists():
-                            print(f"   Size:   {output_path.stat().st_size / 1024 / 1024:.2f} MB")
+                            file_size_mb = output_path.stat().st_size / 1024 / 1024
+                            print(f"   Size:   {file_size_mb:.2f} MB")
                 else:
                     print("No successful conversions to display.")
                     

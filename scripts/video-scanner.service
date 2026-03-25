@@ -1,0 +1,21 @@
+[Unit]
+Description=Video Converter Scan Daemon
+After=network.target mariadb.service
+Wants=mariadb.service
+
+[Service]
+Type=simple
+User=videoconverter
+Group=videoconverter
+WorkingDirectory=/opt/video-converter
+Environment=PYTHONUNBUFFERED=1
+Environment=PATH=/opt/video-converter/venv/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin
+ExecStart=/opt/video-converter/venv/bin/python daemon/scan_daemon.py --foreground
+Restart=on-failure
+RestartSec=10
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=video-scanner
+
+[Install]
+WantedBy=multi-user.target

@@ -27,7 +27,7 @@ def init_database():
         # 選擇資料庫
         cursor.execute(f"USE {db_name}")
         
-        # 建立轉檔任務表
+        # 建立轉檔任務表（更新結構）
         cursor.execute('''
         CREATE TABLE IF NOT EXISTS conversion_tasks (
             id INT AUTO_INCREMENT PRIMARY KEY,
@@ -41,11 +41,14 @@ def init_database():
             start_time DATETIME,
             end_time DATETIME,
             error_message TEXT,
+            retry_count INT DEFAULT 0,
             created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
             updated_at DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
             INDEX idx_status (status),
             INDEX idx_is_processing (is_processing),
-            INDEX idx_created_at (created_at)
+            INDEX idx_created_at (created_at),
+            INDEX idx_retry_count (retry_count),
+            INDEX idx_updated_at (updated_at)
         ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
         ''')
         
