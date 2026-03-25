@@ -25,7 +25,7 @@
 ```
 video-converter/
 │
-├── main.py                    # 舊版 CLI 入口點（原始的整合式腳本）
+├── main.py                    # ⚠️ 舊版 CLI 腳本（已不再維護，請改用 daemon 版本）
 │
 ├── converter.py               # 核心 FFmpeg 封裝模組
 │                              #   get_video_info()     – 用 ffprobe 取得解析度與元數據
@@ -56,11 +56,13 @@ video-converter/
 │   │                          #   可設定掃描間隔（預設：300 秒）
 │   │
 │   └── process_daemon.py      # 處理 Daemon（繼承 BaseDaemon）
-│                              #   執行緒池工作模式（預設：2 個工作執行緒，使用 queue.Queue）
-│                              #   每 CHECK_INTERVAL 秒輪詢一次資料庫的待處理任務（預設：60 秒）
+│                              #   執行緒池工作模式（預設：1 個工作執行緒，使用 queue.Queue）
+│                              #   每 CHECK_INTERVAL 秒輪詢一次資料庫的待處理任務（預設：300 秒）
 │                              #   使用資料庫列鎖（is_processing 旗標）防止重複處理
 │                              #   呼叫 converter.convert_to_480p() 並即時回報進度
 │                              #   更新任務狀態：pending → processing → completed/failed
+│                              #   自動重試失敗任務（每 RETRY_INTERVAL_CYCLES 次 check 執行一次）
+│                              #   自動清除過時任務（每次 check 都執行，閾值 STALE_HOURS）
 │
 ├── api/
 │   └── server.py              # Flask REST + WebSocket API 伺服器
@@ -143,6 +145,9 @@ video-converter/
 | `MAX_WORKERS` | 最大工作執行緒數 |
 | `SCAN_INTERVAL` | 掃描間隔（秒） |
 | `CHECK_INTERVAL` | 任務輪詢間隔（秒） |
+| `MAX_RETRIES` | 失敗任務最大重試次數（預設：`3`） |
+| `RETRY_INTERVAL_CYCLES` | 每幾個 check cycle 執行一次重試（預設：`10`） |
+| `STALE_HOURS` | 任務卡在 processing 超過幾小時視為過時（預設：`1`） |
 | `API_SERVER_HOST`、`API_SERVER_PORT`、`API_SERVER_URL` | API 伺服器設定 |
 | `LOG_LEVEL` | 日誌等級 |
 
@@ -150,40 +155,19 @@ video-converter/
 
 ## 部署方式
 
-### 方式一：Cron 定時任務（簡單模式）
+> ⚠️ **注意：`main.py` 為舊版 CLI 腳本，已不再維護。請使用以下 daemon 方式執行。**
 
-使用 `main.py` 搭配參數：
+### 方式一：長駐 Daemon 程序（建議方式）
 
-```bash
-# 每天晚上 10:00 掃描新檔案並開始轉檔
-0 22 * * * cd /path/to/video-converter && /usr/bin/python3 main.py --no-interactive --verbose >> /var/log/video-converter.log 2>&1
-
-# 每天早上 6:00 清理過時任務並重試失敗任務
-0 6 * * * cd /path/to/video-converter && /usr/bin/python3 main.py --process-only --no-interactive --verbose --cleanup-stale --retry-failed >> /var/log/video-converter-maintenance.log 2>&1
-
-# 每天中午 12:00 只掃描新檔案（不處理）
-0 12 * * * cd /path/to/video-converter && /usr/bin/python3 main.py --scan-only --no-interactive --verbose >> /var/log/video-converter-scan.log 2>&1
-```
-
-### 方式二：長駐 Daemon 程序（建議方式）
-
-以 `start_*.py` 啟動三個獨立程序，並透過 systemd 管理：
+以 `start_*.py` 啟動三個獨立程序：
 
 ```bash
-python start_scan_daemon.py
-python start_process_daemon.py
-python start_api_server.py
+python3 start_scan_daemon.py
+python3 start_process_daemon.py
+python3 start_api_server.py --foreground &
 ```
 
-啟用 systemd 服務：
-
-```bash
-sudo systemctl daemon-reload
-sudo systemctl enable video-converter.service
-sudo systemctl start video-converter.service
-```
-
-### 方式三：即時監控
+### 方式二：即時監控
 
 ```bash
 python monitor_daemons.py -c
@@ -194,6 +178,8 @@ python monitor_daemons.py -c
 ---
 
 ## 指令參數說明（`main.py`）
+
+> ⚠️ `main.py` 為舊版腳本，已不再維護。以下僅供參考，請改用 daemon 版本。
 
 | 參數 | 說明 |
 |---|---|
