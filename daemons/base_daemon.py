@@ -271,6 +271,8 @@ class BaseDaemon(ABC):
             # DaemonContext.__enter__ 執行 double-fork daemonization：
             # 第一次 fork 脫離終端，第二次 fork 確保 daemon 不是 session leader，防止重新獲取 tty
             with self.daemon_context:
+                # 在 daemonized 子程序內才啟動 status monitoring，確保 pid/狀態資訊正確
+                self.start_status_monitoring()
                 self.logger.info(f"{self.name} daemon started with PID: {os.getpid()}")
                 self.is_running = True
                 self.run()
@@ -309,12 +311,46 @@ class BaseDaemon(ABC):
             self.daemon_context.terminate(signal.SIGTERM, frame)
         sys.exit(0)
     
+    def check_pid_file(self):
+        """檢查 PID 檔案是否存在，若存在則確認程序是否仍在執行。
+        - 程序仍在執行：印出錯誤訊息並結束程式
+        - 程序已不存在（殘留 PID 檔）：自動刪除後繼續啟動
+        """
+        pid_path = Path(self.pid_file)
+        if not pid_path.exists():
+            return
+
+        try:
+            pid = int(pid_path.read_text().strip())
+        except (ValueError, OSError):
+            # PID 檔內容無法讀取，視為殘留檔直接刪除
+            pid_path.unlink(missing_ok=True)
+            return
+
+        # 檢查程序是否存在（os.kill(pid, 0) 不會送信號，只檢查程序是否存在）
+        try:
+            os.kill(pid, 0)
+            # 程序存在，拒絕啟動
+            print(f"Error: {self.name} is already running with PID {pid} (PID file: {self.pid_file})")
+            print("If the process is no longer running, delete the PID file manually and retry.")
+            sys.exit(1)
+        except ProcessLookupError:
+            # 程序已不存在，殘留 PID 檔，刪除後繼續
+            print(f"Warning: Stale PID file found (PID {pid} is not running). Removing {self.pid_file}")
+            pid_path.unlink(missing_ok=True)
+        except PermissionError:
+            # 程序存在但屬於其他使用者，同樣拒絕啟動
+            print(f"Error: {self.name} is already running with PID {pid} (owned by another user).")
+            sys.exit(1)
+
     def start(self, daemon_mode=True):
         """啟動 daemon，包含狀態監控"""
-        self.start_status_monitoring()
+        self.check_pid_file()
         if daemon_mode:
             self.daemonize()
         else:
+            # 前景模式在同一程序內啟動 status monitoring
+            self.start_status_monitoring()
             self.run_in_foreground()
     
     def stop(self):

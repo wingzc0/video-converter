@@ -58,31 +58,40 @@ def convert_to_480p(input_path, output_path, progress_callback=None):
         duration = get_video_duration(input_path)
         
         # 執行轉換並實時追蹤進度
+        # 使用 binary 模式讀取 stderr，避免非 UTF-8 字元（如部分影片 metadata）造成 UnicodeDecodeError
         process = subprocess.Popen(
             cmd,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
-            universal_newlines=True
         )
         
         current_time = 0
         # FFmpeg 將進度資訊寫入 stderr 而非 stdout；
         # 逐行讀取 stderr 以解析 time= 欄位，當 readline() 回傳空字串表示子程序輸出已結束
-        while True:
-            line = process.stderr.readline()
-            if not line:
-                break
-            
-            # 解析FFmpeg輸出以追蹤進度
-            if 'time=' in line:
-                time_str = line.split('time=')[1].split(' ')[0].strip()
-                current_time = parse_time_to_seconds(time_str)
+        try:
+            while True:
+                line = process.stderr.readline()
+                if not line:
+                    break
+                # 忽略無法解碼的字元，不中斷進度讀取
+                line = line.decode('utf-8', errors='ignore')
                 
-                if duration > 0 and progress_callback:
-                    # 進度最高上限 99.9%，100% 保留給 process_task 確認輸出檔案存在後才設定，
-                    # 避免 FFmpeg 回傳成功但輸出檔案尚未完整寫入時就顯示 100%
-                    progress = min(99.9, (current_time / duration) * 100)  # 保留100%給完成狀態
-                    progress_callback(progress)
+                # 解析FFmpeg輸出以追蹤進度
+                if 'time=' in line:
+                    time_str = line.split('time=')[1].split(' ')[0].strip()
+                    current_time = parse_time_to_seconds(time_str)
+                    
+                    if duration > 0 and progress_callback:
+                        # 進度最高上限 99.9%，100% 保留給 process_task 確認輸出檔案存在後才設定，
+                        # 避免 FFmpeg 回傳成功但輸出檔案尚未完整寫入時就顯示 100%
+                        progress = min(99.9, (current_time / duration) * 100)  # 保留100%給完成狀態
+                        progress_callback(progress)
+        except Exception as e:
+            print(f"Conversion error: {e}")
+            # 確保 ffmpeg 子程序不會成為孤兒程序繼續佔用資源
+            process.kill()
+            process.wait()
+            return False
         
         return_code = process.wait()
         return return_code == 0
