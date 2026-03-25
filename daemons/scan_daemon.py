@@ -1,6 +1,6 @@
 import time
 import threading
-from datetime import datetime
+from datetime import datetime, timedelta
 from .base_daemon import BaseDaemon
 from db_manager import db_manager
 from converter import get_video_info
@@ -25,6 +25,13 @@ class ScanDaemon(BaseDaemon):
         self.base_output_dir = Path(os.getenv('OUTPUT_DIRECTORY', '')).resolve()
         self.supported_extensions = set(ext.strip().lower() for ext in os.getenv('SUPPORTED_EXTENSIONS', '.mp4,.mkv,.avi,.mov,.flv,.wmv,.m4v,.webm').split(','))
         self.min_resolution = int(os.getenv('MIN_RESOLUTION', '481'))
+
+        # 解析忽略目錄清單，轉為 resolved Path 物件以便精確比對
+        raw_ignore = os.getenv('IGNORE_DIRECTORIES', '')
+        self.ignore_directories = [
+            Path(d.strip()).resolve()
+            for d in raw_ignore.split(',') if d.strip()
+        ]
         self.scan_progress = {
             'status': 'idle',
             'last_scan_time': None,
@@ -73,6 +80,10 @@ class ScanDaemon(BaseDaemon):
                     
                     if file_ext not in self.supported_extensions:
                         continue
+
+                    # 跳過已轉換的輸出檔案（以 480p_ 開頭）
+                    if self.should_skip_file(filename):
+                        continue
                     
                     # 先查詢資料庫確認此路徑是否已有記錄，避免對已知檔案重複呼叫 ffprobe；
                     # ffprobe 需讀取整個影片 header，對大量檔案而言是顯著的效能瓶頸
@@ -99,6 +110,10 @@ class ScanDaemon(BaseDaemon):
                         output_dir = self.base_output_dir / relative_path.parent
                         output_dir.mkdir(parents=True, exist_ok=True)
                         output_path = output_dir / f"480p_{filename}"
+
+                        # 輸出檔已存在則略過，避免重複加入任務
+                        if output_path.exists():
+                            continue
 
                         # 使用 INSERT IGNORE 防止 TOCTOU race condition：
                         # 若兩個 scan 程序同時掃到同一個檔案，不會因 UNIQUE 限制而拋出例外
@@ -129,15 +144,22 @@ class ScanDaemon(BaseDaemon):
             self.scan_progress['status'] = 'idle'
     
     def should_ignore_path(self, path):
-        """檢查路徑是否應該被忽略"""
-        # 注意限制：此處以字串前綴比對，若 ignore_dir 未以路徑分隔符結尾，
-        # 可能誤匹配名稱相似但不同的目錄（例如 /data/out 會匹配 /data/output）；
-        # main.py 的 should_ignore_path 使用更嚴謹的 Path.relative_to 比對
-        ignore_dirs = os.getenv('IGNORE_DIRECTORIES', '').split(',')
-        for ignore_dir in ignore_dirs:
-            if ignore_dir and str(path).startswith(ignore_dir):
+        """檢查路徑是否應該被忽略，使用 Path.relative_to() 進行精確比對，
+        避免字串前綴誤匹配（如 /data/out 誤匹配 /data/output）"""
+        resolved = Path(path).resolve()
+        for ignore_dir in self.ignore_directories:
+            if resolved == ignore_dir:
                 return True
+            try:
+                resolved.relative_to(ignore_dir)
+                return True
+            except ValueError:
+                pass
         return False
+
+    def should_skip_file(self, filename):
+        """跳過已轉換的輸出檔案（以 480p_ 開頭）"""
+        return filename.startswith('480p_')
     
     def run(self):
         """執行掃描 daemon"""

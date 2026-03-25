@@ -40,6 +40,11 @@ class ProcessDaemon(BaseDaemon):
         self.retry_interval_cycles = int(os.getenv('RETRY_INTERVAL_CYCLES', '10'))
         self.stale_hours = float(os.getenv('STALE_HOURS', '1'))
         self._check_cycle = 0  # 累計 check 次數，用於控制重試頻率
+
+        # 時間限制設定
+        self.enable_time_restriction = os.getenv('ENABLE_TIME_RESTRICTION', 'false').strip().lower() == 'true'
+        self.allowed_start_time = self._parse_time(os.getenv('ALLOWED_START_TIME', '22:00'))
+        self.allowed_end_time = self._parse_time(os.getenv('ALLOWED_END_TIME', '06:00'))
         
         # 驗證設定
         self.validate_settings()
@@ -49,6 +54,41 @@ class ProcessDaemon(BaseDaemon):
         self.logger.info(f"Process daemon initialized with {self.max_workers} workers")
         self.logger.info(f"Check interval: {self.check_interval} seconds")
         self.logger.info(f"Max retries: {self.max_retries}, retry every {self.retry_interval_cycles} cycles, stale after {self.stale_hours}h")
+        if self.enable_time_restriction:
+            self.logger.info(f"Time restriction enabled: {self.allowed_start_time.strftime('%H:%M')} - {self.allowed_end_time.strftime('%H:%M')}")
+
+    @staticmethod
+    def _parse_time(time_str):
+        """將 'HH:MM' 字串轉為 datetime.time 物件"""
+        try:
+            h, m = map(int, time_str.strip().split(':'))
+            from datetime import time as dtime
+            return dtime(h, m)
+        except Exception:
+            from datetime import time as dtime
+            return dtime(22, 0)
+
+    def is_time_allowed(self):
+        """檢查目前時間是否在允許轉檔的時段內"""
+        if not self.enable_time_restriction:
+            return True
+        current = datetime.now().time()
+        start, end = self.allowed_start_time, self.allowed_end_time
+        if start > end:
+            # 跨日時段，例如 22:00 - 06:00
+            return current >= start or current <= end
+        return start <= current <= end
+
+    def get_time_until_allowed(self):
+        """計算距離下一個允許時段開始的秒數"""
+        if not self.enable_time_restriction or self.is_time_allowed():
+            return 0
+        now = datetime.now()
+        start = self.allowed_start_time
+        target = now.replace(hour=start.hour, minute=start.minute, second=0, microsecond=0)
+        if target <= now:
+            target += timedelta(days=1)
+        return max(0, (target - now).total_seconds())
     
     def get_pending_tasks(self):
         """獲取待處理的任務"""
@@ -340,6 +380,24 @@ class ProcessDaemon(BaseDaemon):
         # 主循環
         while self.is_running:
             try:
+                # 時間限制：若不在允許時段，等到允許時間
+                if not self.is_time_allowed():
+                    wait_secs = self.get_time_until_allowed()
+                    self.logger.info(
+                        f"Time restriction active. Waiting {wait_secs:.0f}s until "
+                        f"{self.allowed_start_time.strftime('%H:%M')}"
+                    )
+                    self.processing_progress['status'] = 'time_restricted'
+                    # 分段等待，以便能及時響應停止訊號
+                    waited = 0
+                    while self.is_running and waited < wait_secs:
+                        time.sleep(min(60, wait_secs - waited))
+                        waited += 60
+                        if self.is_time_allowed():
+                            break
+                    self.processing_progress['status'] = 'idle'
+                    continue
+
                 self.check_and_process_tasks()
                 
                 # 等待下次檢查
