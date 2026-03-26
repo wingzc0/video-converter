@@ -51,15 +51,21 @@ video-converter/
 │   │
 │   ├── scan_daemon.py         # 掃描 Daemon（繼承 BaseDaemon）
 │   │                          #   遞迴遍歷 INPUT_DIRECTORY
-│   │                          #   跳過已存在資料庫、低於 MIN_RESOLUTION 或副檔名不符的檔案
-│   │                          #   將新發現的影片以 'pending' 狀態寫入 conversion_tasks
-│   │                          #   可設定掃描間隔（預設：300 秒）
+│   │                          #   掃描順序（NFS I/O 最小化）：
+│   │                          #     1. DB 查詢 → pending/processing/failed 直接略過
+│   │                          #     2. completed → 用 DB 儲存的 output_path 做 exist 檢查（無 ffprobe）
+│   │                          #     3. output_path.exists()（單一 stat，跳過 ffprobe）
+│   │                          #     4. ffprobe 僅用於全新且無輸出的檔案
+│   │                          #   可設定掃描間隔（SCAN_INTERVAL，NFS 環境建議 1800 秒）
 │   │
 │   └── process_daemon.py      # 處理 Daemon（繼承 BaseDaemon）
 │                              #   執行緒池工作模式（預設：1 個工作執行緒，使用 queue.Queue）
 │                              #   每 CHECK_INTERVAL 秒輪詢一次資料庫的待處理任務（預設：300 秒）
+│                              #   任務排序：retry_count ASC, created_at ASC（全新任務優先）
 │                              #   使用資料庫列鎖（is_processing 旗標）防止重複處理
+│                              #   worker() 統一管理鎖生命週期（lock_acquired 旗標 + finally 釋放）
 │                              #   呼叫 converter.convert_to_480p() 並即時回報進度
+│                              #   轉檔完成後驗證輸出時長（abs 差值 > DURATION_THRESHOLD → failed）
 │                              #   更新任務狀態：pending → processing → completed/failed
 │                              #   自動重試失敗任務（每 RETRY_INTERVAL_CYCLES 次 check 執行一次）
 │                              #   自動清除過時任務（每次 check 都執行，閾值 STALE_HOURS）
@@ -98,16 +104,17 @@ video-converter/
 [ 檔案系統 ]
       │  （INPUT_DIRECTORY 輸入目錄）
       ▼
-[ 掃描 Daemon ]  ──── ffprobe（解析度檢查）────► [ MariaDB：conversion_tasks ]
- (scan_daemon.py)                                        │  status='pending'（待處理）
-                                                          │
-[ 處理 Daemon ] ◄─────────────── 每 60 秒輪詢 ──────────┘
- (process_daemon.py)
+[ 掃描 Daemon ]  ──── ffprobe（僅全新檔案）────► [ MariaDB：conversion_tasks ]
+ (scan_daemon.py)   DB/stat 檢查已知檔案               │  status='pending'（待處理）
+                    避免重複存取 NFS                     │
+[ 處理 Daemon ] ◄──────── 每 CHECK_INTERVAL 秒輪詢 ────┘
+ (process_daemon.py)  retry_count=0 優先取出
       │  工作執行緒（最多 MAX_WORKERS 個）
       │  取得列鎖（is_processing=TRUE）
       ▼
 [ converter.py ] ──── ffmpeg ────► OUTPUT_DIRECTORY/480p_<檔名>
       │
+      ├─► ffprobe 驗證輸出時長（abs 差 > DURATION_THRESHOLD → failed + retry）
       └─► 更新資料庫：status='processing'（含進度 %）→ 'completed'（完成）/'failed'（失敗）
 
 [ API 伺服器 ] ──── 讀取狀態 JSON + 查詢資料庫 ────► REST/WebSocket 用戶端
@@ -153,12 +160,12 @@ cp .env.sample .env
 | `SUPPORTED_EXTENSIONS` | 支援的副檔名（預設：`.mp4,.mkv,.avi,.mov,.flv,.wmv,.m4v,.webm`） |
 | `MIN_RESOLUTION` | 最低解析度（預設：`481`，即跳過 ≤ 480p 的檔案） |
 | `MAX_WORKERS` | 最大工作執行緒數 |
-| `SCAN_INTERVAL` | 掃描間隔（秒） |
+| `SCAN_INTERVAL` | 掃描間隔（秒，預設 300；NFS 環境建議 1800） |
 | `CHECK_INTERVAL` | 任務輪詢間隔（秒） |
 | `MAX_RETRIES` | 失敗任務最大重試次數（預設：`3`） |
 | `RETRY_INTERVAL_CYCLES` | 每幾個 check cycle 執行一次重試（預設：`10`） |
-| `STALE_HOURS` | 任務卡在 processing 超過幾小時視為過時（預設：`1`） |
-| `DURATION_THRESHOLD` | 輸出檔長度驗證閾值（秒）：輸出比原始短超過此值則視為不完整並重新加入轉檔佇列；設 `0` 停用驗證（預設：`2.0`） |
+| `STALE_HOURS` | 任務卡在 processing 超過幾小時視為過時（預設：`1`，NFS 長時轉檔建議 `4` 以上） |
+| `DURATION_THRESHOLD` | 輸出檔長度驗證閾值（秒）：輸出與來源時長差超過此值（abs）則視為不完整並重新加入佇列；設 `0` 停用驗證（預設：`2.0`） |
 | `API_SERVER_HOST`、`API_SERVER_PORT`、`API_SERVER_URL` | API 伺服器設定 |
 | `LOG_LEVEL` | 日誌等級 |
 
@@ -278,8 +285,9 @@ python monitor_daemons.py -c
 |---|---|
 | `--show-dirs` | 預覽輸入目錄結構（含忽略目錄標示） |
 | `--stats` | 顯示資料庫任務統計（總數、各狀態數量、平均耗時、失敗詳情） |
-| `--retry-failed` | 手動將失敗任務重置為 pending |
-| `--max-retries N` | 重試次數上限（預設 3，搭配 --retry-failed 使用） |
+| `--retry-failed` | 手動將失敗任務重置為 pending（僅 retry_count < max_retries） |
+| `--reset-maxed-failed` | 手動重設已達重試上限的失敗任務為 pending（retry_count 歸零） |
+| `--max-retries N` | 重試次數上限（預設 3，搭配 --retry-failed / --reset-maxed-failed） |
 | `--cleanup-stale` | 手動將卡住的 processing 任務標為 failed |
 | `--stale-hours N` | 過時閾值（小時，預設 24，搭配 --cleanup-stale 使用） |
 
@@ -292,8 +300,11 @@ python3 conv_admin.py --show-dirs
 # 查看任務統計
 python3 conv_admin.py --stats
 
-# 手動重試失敗任務（最多重試 3 次）
+# 手動重試失敗任務（retry_count < 3）
 python3 conv_admin.py --retry-failed
+
+# 重設已達重試上限的失敗任務（retry_count 歸零，重新加入佇列）
+python3 conv_admin.py --reset-maxed-failed
 
 # 清除超過 2 小時未完成的過時任務
 python3 conv_admin.py --cleanup-stale --stale-hours 2
@@ -380,4 +391,4 @@ journalctl -u video-api       -f
 - **可觀測性**（`api/server.py`）：REST API + WebSocket 即時推送
 - **監控**（`monitor_daemons.py`）：終端機儀表板
 
-資料庫列鎖機制（`is_processing` 旗標）確保多個工作執行緒同時運行時不會重複處理同一個檔案。
+資料庫列鎖機制（`is_processing` 旗標 + `processing_lock` 表）確保多個工作執行緒同時運行時不會重複處理同一個檔案。鎖的生命週期統一由 `worker()` 管理，無論正常完成或例外皆保證釋放。
