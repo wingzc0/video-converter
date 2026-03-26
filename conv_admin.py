@@ -188,6 +188,7 @@ def cmd_reset_maxed_failed(max_retries=3):
     print(f"Reset {len(tasks)} task(s) to pending.")
 
 
+def cmd_cleanup_stale(hours=24):
     stale_time = (datetime.now() - timedelta(hours=hours)).strftime('%Y-%m-%d %H:%M:%S')
     tasks = db_manager.execute_query(
         """SELECT id FROM conversion_tasks
