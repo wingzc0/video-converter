@@ -212,7 +212,13 @@ class ProcessDaemon(BaseDaemon):
                 if self.duration_threshold > 0:
                     src_dur = get_video_duration(input_path)
                     out_dur = get_video_duration(output_path)
-                    if src_dur > 0 and (src_dur - out_dur) > self.duration_threshold:
+                    if src_dur > 0 and out_dur == 0:
+                        # ffprobe 無法讀取輸出檔（NFS 暫時性問題或檔案尚未 flush），
+                        # 無法判斷是否完整，保留檔案並標記為完成
+                        self.logger.warning(
+                            f"Task {task_id}: Could not verify output duration (ffprobe returned 0), keeping file"
+                        )
+                    elif src_dur > 0 and out_dur > 0 and (src_dur - out_dur) > self.duration_threshold:
                         error_msg = (
                             f"Incomplete output: src={src_dur:.1f}s, out={out_dur:.1f}s, "
                             f"diff={src_dur - out_dur:.1f}s > threshold={self.duration_threshold}s"

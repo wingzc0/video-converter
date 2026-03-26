@@ -47,8 +47,9 @@ def convert_to_480p(input_path, output_path, progress_callback=None):
         '-preset', 'medium',    # 編碼速度/壓縮率平衡
         '-c:a', 'aac',          # 音訊編碼
         '-b:a', '128k',         # 音訊位元率
-        # +faststart：將 moov atom 移至檔案開頭，讓瀏覽器在下載完成前即可開始播放（pseudo-streaming）
-        '-movflags', '+faststart',  # 網路播放優化
+        # 注意：不使用 +faststart，因為輸出目錄在 NFS 上；
+        # +faststart 需要對輸出檔案做 seek+rewrite，NFS 的隨機寫入會 silent truncate，
+        # 導致 ffmpeg 回傳 exit code 0 但輸出檔案不完整
         '-y',                   # 覆蓋輸出檔案
         output_path
     ]
