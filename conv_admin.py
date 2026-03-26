@@ -10,6 +10,7 @@ bcvnas-converter 資料庫診斷與維護工具
   python3 conv_admin.py --stats
   python3 conv_admin.py --retry-failed
   python3 conv_admin.py --cleanup-stale [--stale-hours N]
+  python3 conv_admin.py --reset-maxed-failed [--max-retries N]
 """
 import os
 import argparse
@@ -156,7 +157,37 @@ def cmd_retry_failed(max_retries=3):
         )
     print(f"Retried {len(tasks)} task(s) (max_retries={max_retries}).")
 
-def cmd_cleanup_stale(hours=24):
+def cmd_reset_maxed_failed(max_retries=3):
+    tasks = db_manager.execute_query(
+        """SELECT id, input_path, retry_count, error_message
+           FROM conversion_tasks
+           WHERE status='failed' AND retry_count >= %s
+           ORDER BY updated_at DESC""",
+        (max_retries,), fetch=True
+    )
+    if not tasks:
+        print(f"No failed tasks with retry_count >= {max_retries}.")
+        return
+    print(f"Found {len(tasks)} task(s) with retry_count >= {max_retries}:")
+    for t in tasks:
+        print(f"  [{t['id']}] {Path(t['input_path']).name}  (retries={t['retry_count']})")
+    confirm = input(f"\nReset all {len(tasks)} task(s) to pending with retry_count=0? [y/N] ").strip().lower()
+    if confirm != 'y':
+        print("Aborted.")
+        return
+    ids = [t['id'] for t in tasks]
+    placeholders = ','.join(['%s'] * len(ids))
+    db_manager.execute_query(
+        f"""UPDATE conversion_tasks
+            SET status='pending', is_processing=FALSE,
+                retry_count=0,
+                error_message=CONCAT('Reset from maxed-failed: ', COALESCE(error_message,''))
+            WHERE id IN ({placeholders})""",
+        tuple(ids)
+    )
+    print(f"Reset {len(tasks)} task(s) to pending.")
+
+
     stale_time = (datetime.now() - timedelta(hours=hours)).strftime('%Y-%m-%d %H:%M:%S')
     tasks = db_manager.execute_query(
         """SELECT id FROM conversion_tasks
@@ -194,14 +225,17 @@ def parse_arguments():
   python3 conv_admin.py --stats
   python3 conv_admin.py --retry-failed
   python3 conv_admin.py --cleanup-stale --stale-hours 2
+  python3 conv_admin.py --reset-maxed-failed
+  python3 conv_admin.py --reset-maxed-failed --max-retries 5
 """
     )
 
     action = parser.add_mutually_exclusive_group(required=True)
-    action.add_argument('--show-dirs',     action='store_true', help='預覽目錄結構')
-    action.add_argument('--stats',         action='store_true', help='顯示任務統計')
-    action.add_argument('--retry-failed',  action='store_true', help='手動重試失敗任務')
-    action.add_argument('--cleanup-stale', action='store_true', help='手動清除過時任務')
+    action.add_argument('--show-dirs',          action='store_true', help='預覽目錄結構')
+    action.add_argument('--stats',               action='store_true', help='顯示任務統計')
+    action.add_argument('--retry-failed',        action='store_true', help='手動重試失敗任務')
+    action.add_argument('--cleanup-stale',       action='store_true', help='手動清除過時任務')
+    action.add_argument('--reset-maxed-failed',  action='store_true', help='重設已達重試上限的失敗任務為 pending（retry_count 歸零）')
 
     parser.add_argument('--stale-hours', type=float, default=24,
                         help='過時任務的時間閾值（小時，預設 24，僅用於 --cleanup-stale）')
@@ -221,6 +255,8 @@ def main():
         cmd_retry_failed(args.max_retries)
     elif args.cleanup_stale:
         cmd_cleanup_stale(args.stale_hours)
+    elif args.reset_maxed_failed:
+        cmd_reset_maxed_failed(args.max_retries)
 
 
 if __name__ == '__main__':
