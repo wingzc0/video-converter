@@ -1,0 +1,200 @@
+"""
+Unit tests for daemons/scan_daemon.py
+測試路徑過濾、檔案跳過邏輯；DB 與 ffprobe 呼叫均以 mock 取代。
+"""
+import sys
+import unittest
+from pathlib import Path
+from unittest.mock import MagicMock, patch
+
+sys.path.insert(0, str(Path(__file__).parent.parent))
+
+
+def _make_scan_daemon(tmp_path):
+    """建立 ScanDaemon，注入臨時目錄以通過 validate_settings()"""
+    (tmp_path / 'input').mkdir()
+    (tmp_path / 'output').mkdir()
+    with patch.dict('os.environ', {
+        'INPUT_DIRECTORY': str(tmp_path / 'input'),
+        'OUTPUT_DIRECTORY': str(tmp_path / 'output'),
+        'IGNORE_DIRECTORIES': '',
+    }):
+        from daemons.scan_daemon import ScanDaemon
+        return ScanDaemon(scan_interval=60)
+
+
+class TestShouldSkipFile(unittest.TestCase):
+    """should_skip_file() — 跳過以 480p_ 開頭的已轉換輸出檔"""
+
+    def setUp(self):
+        import tempfile
+        self.tmp = tempfile.mkdtemp()
+        self.daemon = _make_scan_daemon(Path(self.tmp))
+
+    def test_skip_480p_prefix(self):
+        self.assertTrue(self.daemon.should_skip_file('480p_video.mp4'))
+
+    def test_skip_480p_uppercase(self):
+        # 大小寫敏感：480P_ 不應被跳過
+        self.assertFalse(self.daemon.should_skip_file('480P_video.mp4'))
+
+    def test_do_not_skip_normal_file(self):
+        self.assertFalse(self.daemon.should_skip_file('video.mp4'))
+
+    def test_do_not_skip_file_containing_480p(self):
+        # 只有前綴才跳過，中間出現不算
+        self.assertFalse(self.daemon.should_skip_file('my_480p_video.mp4'))
+
+    def test_skip_480p_prefix_only_filename(self):
+        self.assertTrue(self.daemon.should_skip_file('480p_'))
+
+
+class TestShouldIgnorePath(unittest.TestCase):
+    """should_ignore_path() — 使用 Path.relative_to() 精確比對，避免前綴誤判"""
+
+    def setUp(self):
+        import tempfile
+        self.tmp = tempfile.mkdtemp()
+
+    def _make_daemon_with_ignore(self, ignore_dirs):
+        (Path(self.tmp) / 'input').mkdir(exist_ok=True)
+        (Path(self.tmp) / 'output').mkdir(exist_ok=True)
+        with patch.dict('os.environ', {
+            'INPUT_DIRECTORY': str(Path(self.tmp) / 'input'),
+            'OUTPUT_DIRECTORY': str(Path(self.tmp) / 'output'),
+            'IGNORE_DIRECTORIES': ','.join(ignore_dirs),
+        }):
+            from daemons.scan_daemon import ScanDaemon
+            return ScanDaemon(scan_interval=60)
+
+    def test_exact_match_ignored(self):
+        ignore = str(Path(self.tmp) / 'input' / 'skip_me')
+        daemon = self._make_daemon_with_ignore([ignore])
+        self.assertTrue(daemon.should_ignore_path(Path(ignore)))
+
+    def test_subpath_is_ignored(self):
+        """子目錄也應被忽略"""
+        ignore = str(Path(self.tmp) / 'input' / 'skip_me')
+        daemon = self._make_daemon_with_ignore([ignore])
+        self.assertTrue(daemon.should_ignore_path(
+            Path(self.tmp) / 'input' / 'skip_me' / 'subdir'
+        ))
+
+    def test_prefix_only_not_ignored(self):
+        """/data/out 不應誤匹配 /data/output（字串前綴的 bug）"""
+        ignore = str(Path(self.tmp) / 'input' / 'out')
+        daemon = self._make_daemon_with_ignore([ignore])
+        self.assertFalse(daemon.should_ignore_path(
+            Path(self.tmp) / 'input' / 'output'
+        ))
+
+    def test_non_ignored_path_allowed(self):
+        ignore = str(Path(self.tmp) / 'input' / 'skip_me')
+        daemon = self._make_daemon_with_ignore([ignore])
+        self.assertFalse(daemon.should_ignore_path(
+            Path(self.tmp) / 'input' / 'keep_me'
+        ))
+
+    def test_empty_ignore_list(self):
+        daemon = self._make_daemon_with_ignore([])
+        self.assertFalse(daemon.should_ignore_path(Path(self.tmp) / 'input' / 'anything'))
+
+
+class TestScanDirectoryFiltering(unittest.TestCase):
+    """scan_directory() 整合測試：確認各過濾條件的行為"""
+
+    def setUp(self):
+        import tempfile, os
+        self.tmp = Path(tempfile.mkdtemp())
+        self.input_dir = self.tmp / 'input'
+        self.output_dir = self.tmp / 'output'
+        self.input_dir.mkdir()
+        self.output_dir.mkdir()
+
+    def _make_daemon(self, ignore=''):
+        with patch.dict('os.environ', {
+            'INPUT_DIRECTORY': str(self.input_dir),
+            'OUTPUT_DIRECTORY': str(self.output_dir),
+            'IGNORE_DIRECTORIES': ignore,
+            'MIN_RESOLUTION': '481',
+        }):
+            from daemons.scan_daemon import ScanDaemon
+            return ScanDaemon(scan_interval=60)
+
+    @patch('daemons.scan_daemon.db_manager')
+    @patch('daemons.scan_daemon.get_video_info')
+    def test_skips_480p_prefixed_files(self, mock_info, mock_db):
+        """以 480p_ 開頭的檔案不應加入 DB"""
+        (self.input_dir / '480p_already_converted.mp4').touch()
+        mock_db.execute_query.return_value = []
+        daemon = self._make_daemon()
+        daemon.scan_directory()
+        # get_video_info 不應被呼叫（檔案應在 should_skip_file 就被跳過）
+        mock_info.assert_not_called()
+
+    @patch('daemons.scan_daemon.db_manager')
+    @patch('daemons.scan_daemon.get_video_info')
+    def test_skips_unsupported_extension(self, mock_info, mock_db):
+        """不支援的副檔名應被跳過"""
+        (self.input_dir / 'document.pdf').touch()
+        mock_db.execute_query.return_value = []
+        daemon = self._make_daemon()
+        daemon.scan_directory()
+        mock_info.assert_not_called()
+
+    @patch('daemons.scan_daemon.db_manager')
+    @patch('daemons.scan_daemon.get_video_info')
+    def test_skips_low_resolution_video(self, mock_info, mock_db):
+        """解析度低於 MIN_RESOLUTION 的影片不應加入 DB"""
+        (self.input_dir / 'small.mp4').touch()
+        mock_db.execute_query.return_value = []  # 未在 DB 中
+        mock_info.return_value = {'width': 640, 'height': 360, 'resolution': '640x360'}
+        daemon = self._make_daemon()
+        daemon.scan_directory()
+        # execute_query 只應被呼叫一次（SELECT 檢查是否已在 DB），不應有 INSERT
+        insert_calls = [c for c in mock_db.execute_query.call_args_list
+                        if 'INSERT' in str(c)]
+        self.assertEqual(len(insert_calls), 0)
+
+    @patch('daemons.scan_daemon.db_manager')
+    @patch('daemons.scan_daemon.get_video_info')
+    def test_adds_new_hd_video_to_db(self, mock_info, mock_db):
+        """未在 DB 且解析度足夠的影片應以 INSERT IGNORE 加入 DB"""
+        (self.input_dir / 'hd_video.mp4').touch()
+        mock_db.execute_query.side_effect = [[], 1]  # SELECT → 空, INSERT → 1 row
+        mock_info.return_value = {'width': 1920, 'height': 1080, 'resolution': '1920x1080'}
+        daemon = self._make_daemon()
+        daemon.scan_directory()
+        insert_calls = [c for c in mock_db.execute_query.call_args_list
+                        if 'INSERT' in str(c)]
+        self.assertEqual(len(insert_calls), 1)
+        self.assertEqual(daemon.scan_progress['tasks_added'], 1)
+
+    @patch('daemons.scan_daemon.db_manager')
+    @patch('daemons.scan_daemon.get_video_info')
+    def test_skips_already_in_db(self, mock_info, mock_db):
+        """已在 DB 中的路徑不應再呼叫 ffprobe 或 INSERT"""
+        (self.input_dir / 'existing.mp4').touch()
+        mock_db.execute_query.return_value = [{'id': 1}]  # 已存在
+        daemon = self._make_daemon()
+        daemon.scan_directory()
+        mock_info.assert_not_called()
+
+    @patch('daemons.scan_daemon.db_manager')
+    @patch('daemons.scan_daemon.get_video_info')
+    def test_skips_if_output_file_exists(self, mock_info, mock_db):
+        """輸出檔已存在時不應加入 DB"""
+        (self.input_dir / 'video.mp4').touch()
+        # 建立對應的輸出檔
+        (self.output_dir / '480p_video.mp4').touch()
+        mock_db.execute_query.return_value = []  # 未在 DB
+        mock_info.return_value = {'width': 1920, 'height': 1080, 'resolution': '1920x1080'}
+        daemon = self._make_daemon()
+        daemon.scan_directory()
+        insert_calls = [c for c in mock_db.execute_query.call_args_list
+                        if 'INSERT' in str(c)]
+        self.assertEqual(len(insert_calls), 0)
+
+
+if __name__ == '__main__':
+    unittest.main()
