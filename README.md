@@ -66,6 +66,8 @@ video-converter/
 │                              #   worker() 統一管理鎖生命週期（lock_acquired 旗標 + finally 釋放）
 │                              #   呼叫 converter.convert_to_480p() 並即時回報進度
 │                              #   轉檔完成後驗證輸出時長（abs 差值 > DURATION_THRESHOLD → failed）
+│                              #   status='completed'/'failed' 時原子性清除 is_processing 旗標
+│                              #   retry_count 在 update_task_status(failed) 時遞增（非重新排入時）
 │                              #   更新任務狀態：pending → processing → completed/failed
 │                              #   自動重試失敗任務（每 RETRY_INTERVAL_CYCLES 次 check 執行一次）
 │                              #   自動清除過時任務（每次 check 都執行，閾值 STALE_HOURS）
@@ -133,8 +135,8 @@ video-converter/
 | `source_resolution`、`target_resolution` | 例如 `1920x1080` → `480p` |
 | `status` | 列舉值：`pending`（待處理）\| `processing`（處理中）\| `completed`（完成）\| `failed`（失敗） |
 | `progress` | 0.00 至 100.00（轉檔過程中即時更新） |
-| `is_processing` | 布林鎖旗標，防止重複處理 |
-| `retry_count`、`error_message` | 重試次數與錯誤訊息 |
+| `is_processing` | 布林鎖旗標，防止重複處理；status 更新為 completed/failed 時原子性清除 |
+| `retry_count`、`error_message` | 重試次數（每次標記 failed 時遞增）與錯誤訊息 |
 | `start_time`、`end_time` | 任務起訖時間 |
 
 **`processing_lock`**：輔助鎖表（以 `task_id` 為主鍵）
@@ -391,4 +393,4 @@ journalctl -u video-api       -f
 - **可觀測性**（`api/server.py`）：REST API + WebSocket 即時推送
 - **監控**（`monitor_daemons.py`）：終端機儀表板
 
-資料庫列鎖機制（`is_processing` 旗標 + `processing_lock` 表）確保多個工作執行緒同時運行時不會重複處理同一個檔案。鎖的生命週期統一由 `worker()` 管理，無論正常完成或例外皆保證釋放。
+資料庫列鎖機制（`is_processing` 旗標 + `processing_lock` 表）確保多個工作執行緒同時運行時不會重複處理同一個檔案。鎖的生命週期統一由 `worker()` 管理；`status='completed'/'failed'` 的 UPDATE 同時原子性清除 `is_processing`，即使程序在 finally 釋放前崩潰也不會造成任務永久卡死。`retry_count` 代表已嘗試次數，每次標記 `failed` 時遞增，`MAX_RETRIES=N` 表示最多執行 N 次。
