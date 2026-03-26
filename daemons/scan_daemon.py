@@ -88,16 +88,41 @@ class ScanDaemon(BaseDaemon):
                     if self.should_skip_file(filename):
                         continue
                     
-                    # 快速跳過：DB 已有 pending/processing/failed 記錄且輸出檔存在，
-                    # 這些任務正在佇列中或已失敗等待重試，無需重新掃描
-                    query = "SELECT id, status FROM conversion_tasks WHERE input_path = %s LIMIT 1"
+                    # ── Step 1: DB 查詢（無 NFS I/O）────────────────────────────────
+                    # 同時取出 output_path，供 completed 狀態直接驗證輸出檔，避免重跑 ffprobe
+                    query = "SELECT id, status, output_path FROM conversion_tasks WHERE input_path = %s LIMIT 1"
                     db_result = db_manager.execute_query(query, (str(file_path),), fetch=True)
                     if db_result:
                         db_status = db_result[0].get('status', '')
                         if db_status in ('pending', 'processing', 'failed'):
                             continue
 
-                    # 檢查解析度（ffprobe）：低解析度不需轉換，直接跳過
+                        if db_status == 'completed':
+                            stored_output = db_result[0].get('output_path', '')
+                            if stored_output and Path(stored_output).exists():
+                                continue  # 輸出檔存在，無需任何動作
+                            # 輸出檔遺失：重新排入佇列
+                            self.logger.warning(
+                                f"Output missing for completed task, re-queuing: {file_path.name}"
+                            )
+                            db_manager.execute_query(
+                                "UPDATE conversion_tasks SET status='pending', is_processing=FALSE, "
+                                "retry_count=0, error_message='Output file missing, re-queued by scanner' "
+                                "WHERE input_path=%s",
+                                (str(file_path),)
+                            )
+                            continue
+
+                    # ── Step 2: 計算輸出路徑（純字串運算，無 NFS I/O）────────────────
+                    relative_path = file_path.relative_to(self.base_input_dir)
+                    output_dir = self.base_output_dir / relative_path.parent
+                    output_path = output_dir / f"480p_{filename}"
+
+                    # ── Step 3: 輸出檔已存在則跳過（一次 stat，避免 ffprobe）────────
+                    if output_path.exists():
+                        continue
+
+                    # ── Step 4: 僅對全新且尚無輸出的檔案呼叫 ffprobe ────────────────
                     try:
                         video_info = get_video_info(str(file_path))
                         if not video_info:
@@ -109,28 +134,7 @@ class ScanDaemon(BaseDaemon):
                         if height < self.min_resolution:
                             continue
 
-                        # 計算輸出路徑
-                        relative_path = file_path.relative_to(self.base_input_dir)
-                        output_dir = self.base_output_dir / relative_path.parent
                         output_dir.mkdir(parents=True, exist_ok=True)
-                        output_path = output_dir / f"480p_{filename}"
-
-                        # ── 輸出檔已存在：略過（長度驗證由 process_daemon 在轉檔完成時負責）──
-                        if output_path.exists():
-                            continue
-
-                        # ── 輸出檔不存在：處理 completed 但輸出遺失的情況 ────────────
-                        elif db_result and db_result[0].get('status') == 'completed':
-                            self.logger.warning(
-                                f"Output missing for completed task, re-queuing: {file_path.name}"
-                            )
-                            db_manager.execute_query(
-                                "UPDATE conversion_tasks SET status='pending', is_processing=FALSE, "
-                                "retry_count=0, error_message='Output file missing, re-queued by scanner' "
-                                "WHERE input_path=%s",
-                                (str(file_path),)
-                            )
-                            continue
 
                         # 使用 INSERT IGNORE 防止 TOCTOU race condition：
                         # 若兩個 scan 程序同時掃到同一個檔案，不會因 UNIQUE 限制而拋出例外
@@ -145,7 +149,7 @@ class ScanDaemon(BaseDaemon):
                         # 不應計入本次新增的任務數
                         if rows > 0:
                             self.scan_progress['tasks_added'] += 1
-                        
+
                     except Exception as e:
                         error_msg = f"Error processing {file_path}: {str(e)}"
                         self.logger.error(error_msg)
