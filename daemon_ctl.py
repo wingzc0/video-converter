@@ -252,10 +252,27 @@ def cmd_log(target, follow=False, error=False):
     flag = '+F' if follow else '+G'
     cmd = [less, '-R', '-S', flag] + existing
 
+    # 在 less +F 模式下，Ctrl+C 中斷可能導致 terminal 停在 raw mode（無回顯）。
+    # 用 termios 事先備份 terminal 屬性，離開後無論正常或中斷都還原。
+    import termios
+    fd = sys.stdin.fileno() if sys.stdin.isatty() else None
+    saved_tty = None
+    if fd is not None:
+        try:
+            saved_tty = termios.tcgetattr(fd)
+        except termios.error:
+            pass
+
     try:
         subprocess.run(cmd)
     except KeyboardInterrupt:
         pass
+    finally:
+        if saved_tty is not None:
+            try:
+                termios.tcsetattr(fd, termios.TCSADRAIN, saved_tty)
+            except termios.error:
+                pass
 
 
 # ---------------------------------------------------------------------------
