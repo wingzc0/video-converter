@@ -3,7 +3,7 @@ import threading
 from datetime import datetime, timedelta
 from .base_daemon import BaseDaemon
 from db_manager import db_manager
-from converter import convert_to_480p
+from converter import convert_to_480p, get_video_duration
 import queue
 from pathlib import Path
 import os
@@ -40,6 +40,10 @@ class ProcessDaemon(BaseDaemon):
         self.retry_interval_cycles = int(os.getenv('RETRY_INTERVAL_CYCLES', '10'))
         self.stale_hours = float(os.getenv('STALE_HOURS', '1'))
         self._check_cycle = 0  # 累計 check 次數，用於控制重試頻率
+
+        # 輸出檔長度驗證：轉檔完成後確認輸出時長與來源差距不超過此閾值（秒）
+        # 設為 0 可停用長度驗證
+        self.duration_threshold = float(os.getenv('DURATION_THRESHOLD', '2.0'))
 
         # 時間限制設定
         self.enable_time_restriction = os.getenv('ENABLE_TIME_RESTRICTION', 'false').strip().lower() == 'true'
@@ -204,6 +208,20 @@ class ProcessDaemon(BaseDaemon):
             
             # 更新最終狀態
             if success:
+                # 轉檔成功後驗證輸出時長，避免儲存不完整的輸出檔
+                if self.duration_threshold > 0:
+                    src_dur = get_video_duration(input_path)
+                    out_dur = get_video_duration(output_path)
+                    if src_dur > 0 and (src_dur - out_dur) > self.duration_threshold:
+                        error_msg = (
+                            f"Incomplete output: src={src_dur:.1f}s, out={out_dur:.1f}s, "
+                            f"diff={src_dur - out_dur:.1f}s > threshold={self.duration_threshold}s"
+                        )
+                        self.logger.warning(f"Task {task_id}: {error_msg}")
+                        Path(output_path).unlink(missing_ok=True)
+                        self.update_task_status(task_id, 'failed', error_message=error_msg)
+                        self.processing_progress['tasks_failed'] += 1
+                        return
                 self.update_task_status(task_id, 'completed', progress=100.0)
                 self.processing_progress['tasks_completed'] += 1
                 self.logger.info(f"Task {task_id} completed successfully: {output_path}")

@@ -3,7 +3,7 @@ import threading
 from datetime import datetime, timedelta
 from .base_daemon import BaseDaemon
 from db_manager import db_manager
-from converter import get_video_info, get_video_duration
+from converter import get_video_info
 from pathlib import Path
 import os
 
@@ -33,9 +33,7 @@ class ScanDaemon(BaseDaemon):
             for d in raw_ignore.split(',') if d.strip()
         ]
 
-        # 輸出檔長度驗證：若輸出檔時長比原始檔短超過此閾值（秒），視為不完整，重新加入轉檔
-        # 設為 0 可停用長度比對（只要輸出檔存在就略過）
-        self.duration_threshold = float(os.getenv('DURATION_THRESHOLD', '2.0'))
+        # 輸出檔長度驗證設定已移至 process_daemon（轉檔完成後才驗證）
 
         self.scan_progress = {
             'status': 'idle',
@@ -58,10 +56,6 @@ class ScanDaemon(BaseDaemon):
         self.logger.info(f"Scan daemon initialized with interval: {self.scan_interval} seconds")
         self.logger.info(f"Input directory: {self.base_input_dir}")
         self.logger.info(f"Output directory: {self.base_output_dir}")
-        if self.duration_threshold > 0:
-            self.logger.info(f"Duration validation: enabled (threshold={self.duration_threshold}s)")
-        else:
-            self.logger.info("Duration validation: disabled")
     
     def scan_directory(self):
         """掃描目錄並添加新任務"""
@@ -121,32 +115,9 @@ class ScanDaemon(BaseDaemon):
                         output_dir.mkdir(parents=True, exist_ok=True)
                         output_path = output_dir / f"480p_{filename}"
 
-                        # ── 輸出檔已存在：進行長度驗證 ──────────────────────────────
+                        # ── 輸出檔已存在：略過（長度驗證由 process_daemon 在轉檔完成時負責）──
                         if output_path.exists():
-                            if self.duration_threshold <= 0:
-                                continue  # 停用驗證，有輸出檔即略過
-                            src_dur = get_video_duration(str(file_path))
-                            out_dur = get_video_duration(str(output_path))
-                            if src_dur > 0 and (src_dur - out_dur) > self.duration_threshold:
-                                # 輸出檔時長明顯偏短，視為不完整，刪除後重新加入任務
-                                self.logger.warning(
-                                    f"Incomplete output detected: {output_path.name} "
-                                    f"(src={src_dur:.1f}s, out={out_dur:.1f}s, "
-                                    f"diff={src_dur - out_dur:.1f}s > threshold={self.duration_threshold}s)"
-                                )
-                                output_path.unlink(missing_ok=True)
-                                if db_result:
-                                    # DB 有記錄：重置為 pending，process_daemon 會重新處理
-                                    db_manager.execute_query(
-                                        "UPDATE conversion_tasks SET status='pending', is_processing=FALSE, "
-                                        "retry_count=0, error_message='Incomplete output, re-queued by scanner' "
-                                        "WHERE input_path=%s",
-                                        (str(file_path),)
-                                    )
-                                    continue  # DB 已重置為 pending，無需再 INSERT
-                                # DB 無記錄：落入後續 INSERT 流程
-                            else:
-                                continue  # 長度相符，略過
+                            continue
 
                         # ── 輸出檔不存在：處理 completed 但輸出遺失的情況 ────────────
                         elif db_result and db_result[0].get('status') == 'completed':
