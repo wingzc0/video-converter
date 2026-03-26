@@ -226,13 +226,19 @@ class ProcessDaemon(BaseDaemon):
                 if self.duration_threshold > 0:
                     src_dur = get_video_duration(input_path)
                     out_dur = get_video_duration(output_path)
-                    if src_dur > 0 and out_dur == 0:
+                    if src_dur == 0:
+                        # 無法讀取來源時長（NFS 暫時性問題或來源損毀），
+                        # 保留輸出並標記完成，避免誤刪可能完整的輸出檔
+                        self.logger.warning(
+                            f"Task {task_id}: Could not read source duration (ffprobe returned 0), skipping validation"
+                        )
+                    elif out_dur == 0:
                         # ffprobe 無法讀取輸出檔（NFS 暫時性問題或檔案尚未 flush），
                         # 無法判斷是否完整，保留檔案並標記為完成
                         self.logger.warning(
                             f"Task {task_id}: Could not verify output duration (ffprobe returned 0), keeping file"
                         )
-                    elif src_dur > 0 and out_dur > 0 and (src_dur - out_dur) > self.duration_threshold:
+                    elif (src_dur - out_dur) > self.duration_threshold:
                         error_msg = (
                             f"Incomplete output: src={src_dur:.1f}s, out={out_dur:.1f}s, "
                             f"diff={src_dur - out_dur:.1f}s > threshold={self.duration_threshold}s"
@@ -266,20 +272,23 @@ class ProcessDaemon(BaseDaemon):
         while self.is_running:
             try:
                 task_id = self.task_queue.get(timeout=1)
+            except queue.Empty:
+                continue
+            try:
                 # 取得 DB 層級的任務鎖，防止多 worker（或跨程序）同時處理同一任務；
                 # 若鎖取得失敗（任務已被其他 worker 取走），直接略過
                 if not self.acquire_task_lock(task_id, worker_id):
                     self.logger.debug(f"Worker {worker_id}: task {task_id} already locked, skipping")
-                    self.task_queue.task_done()
                     continue
                 with self.worker_locks[worker_id]:
                     self.process_task(task_id, worker_id)
-                self.task_queue.task_done()
-            except queue.Empty:
-                continue
             except Exception as e:
                 self.logger.error(f"Worker {worker_id} error: {str(e)}")
                 time.sleep(1)
+            finally:
+                # 無論成功、失敗或例外，都必須呼叫 task_done()，
+                # 否則 queue 內部計數器不會歸零，若未來使用 join() 會導致永久阻塞
+                self.task_queue.task_done()
         
         self.logger.info(f"Worker {worker_id} stopped")
     

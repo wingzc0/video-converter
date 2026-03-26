@@ -76,7 +76,12 @@ class APIServer:
     def create_app(self):
         """建立 Flask 應用"""
         app = Flask(__name__)
-        app.config['SECRET_KEY'] = os.getenv('SECRET_KEY', 'secret_video_converter_key')
+        secret_key = os.getenv('SECRET_KEY')
+        if not secret_key:
+            import secrets
+            secret_key = secrets.token_hex(32)
+            self.logger.warning("SECRET_KEY not set in environment; using a randomly generated key. Sessions will be invalidated on restart.")
+        app.config['SECRET_KEY'] = secret_key
         app.config['JSON_AS_ASCII'] = False
         CORS(app)
         return app
