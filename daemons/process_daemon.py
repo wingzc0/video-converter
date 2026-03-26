@@ -352,7 +352,7 @@ class ProcessDaemon(BaseDaemon):
             FROM conversion_tasks
             WHERE status = 'processing'
             AND is_processing = TRUE
-            AND (start_time IS NULL OR start_time < %s)
+            AND COALESCE(start_time, updated_at, created_at) < %s
             '''
             stale_tasks = db_manager.execute_query(
                 query, (stale_time.strftime('%Y-%m-%d %H:%M:%S'),), fetch=True

@@ -97,7 +97,7 @@ class DaemonMonitor:
     def format_duration(self, seconds):
         """格式化持續時間"""
         if seconds < 0:
-            return "N/A"
+            seconds = 0  # 系統時鐘向後調整時可能出現負值，夾至 0
         
         if seconds < 60:
             return f"{seconds:.0f} 秒"
@@ -160,7 +160,11 @@ class DaemonMonitor:
                         start_time_ticks = int(stat[21])
                         clock_ticks_per_second = os.sysconf(os.sysconf_names['SC_CLK_TCK'])
                         start_time_seconds = start_time_ticks / clock_ticks_per_second
-                        uptime = time.time() - start_time_seconds
+                        # 從 /proc/uptime 取得系統已運行秒數，與行程啟動時間相減得到正確 uptime；
+                        # 不能用 time.time() - start_time_seconds（兩者時間基準不同）
+                        with open('/proc/uptime') as uf:
+                            system_uptime = float(uf.read().split()[0])
+                        uptime = system_uptime - start_time_seconds
                 except:
                     uptime = 0
                 
