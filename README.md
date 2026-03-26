@@ -79,7 +79,7 @@ video-converter/
 │
 ├── daemon_ctl.py              # 統一管理腳本：scan/process/api 的 start/stop/restart/status
 │                              #   all 指令同時操作 scan 和 process（不含 api）
-├── start_api_server.py        # 啟動腳本：啟動 Flask API 伺服器
+│                              #   api target 獨立控制 Flask API 伺服器
 │
 ├── scripts/
 │   ├── install_daemons.sh     # 安裝腳本：將 service 模板替換後安裝至 /etc/systemd/system/
@@ -337,7 +337,7 @@ journalctl -u video-api       -f
 |---|---|---|
 | `video-scanner` | `start_scan_daemon.py` | 定期掃描目錄，發現新影片加入 DB |
 | `video-processor` | `start_process_daemon.py` | 從 DB 取出 pending 任務，呼叫 ffmpeg 轉檔 |
-| `video-api` | `start_api_server.py` | REST API + WebSocket 即時狀態推送 |
+| `video-api` | `daemon_ctl.py api` | REST API + WebSocket 即時狀態推送 |
 
 > **注意**：`EnvironmentFile` 指向 `{{INSTALL_DIR}}/.env`，請確認 `.env` 已正確設定後再啟動服務。
 
