@@ -94,20 +94,21 @@ class ScanDaemon(BaseDaemon):
                     if self.should_skip_file(filename):
                         continue
                     
-                    # 先查詢資料庫確認此路徑是否已有記錄，避免對已知檔案重複呼叫 ffprobe；
-                    # ffprobe 需讀取整個影片 header，對大量檔案而言是顯著的效能瓶頸
-                    query = "SELECT id FROM conversion_tasks WHERE input_path = %s LIMIT 1"
-                    result = db_manager.execute_query(query, (str(file_path),), fetch=True)
-                    
-                    if result:
-                        continue
-                    
-                    # 檢查解析度
+                    # 快速跳過：DB 已有 pending/processing/failed 記錄且輸出檔存在，
+                    # 這些任務正在佇列中或已失敗等待重試，無需重新掃描
+                    query = "SELECT id, status FROM conversion_tasks WHERE input_path = %s LIMIT 1"
+                    db_result = db_manager.execute_query(query, (str(file_path),), fetch=True)
+                    if db_result:
+                        db_status = db_result[0].get('status', '')
+                        if db_status in ('pending', 'processing', 'failed'):
+                            continue
+
+                    # 檢查解析度（ffprobe）：低解析度不需轉換，直接跳過
                     try:
                         video_info = get_video_info(str(file_path))
                         if not video_info:
                             continue
-                        
+
                         width, height = map(int, video_info['resolution'].split('x'))
                         # 以 height 判斷是否需要轉換：影片解析度標準（480p、720p、1080p）皆以高度為基準；
                         # 若 height < min_resolution（預設 481），表示已是 480p 或更低，無需轉換
@@ -120,11 +121,10 @@ class ScanDaemon(BaseDaemon):
                         output_dir.mkdir(parents=True, exist_ok=True)
                         output_path = output_dir / f"480p_{filename}"
 
-                        # 輸出檔已存在則進行長度驗證
+                        # ── 輸出檔已存在：進行長度驗證 ──────────────────────────────
                         if output_path.exists():
                             if self.duration_threshold <= 0:
-                                # 停用驗證，直接略過
-                                continue
+                                continue  # 停用驗證，有輸出檔即略過
                             src_dur = get_video_duration(str(file_path))
                             out_dur = get_video_duration(str(output_path))
                             if src_dur > 0 and (src_dur - out_dur) > self.duration_threshold:
@@ -135,7 +135,6 @@ class ScanDaemon(BaseDaemon):
                                     f"diff={src_dur - out_dur:.1f}s > threshold={self.duration_threshold}s)"
                                 )
                                 output_path.unlink(missing_ok=True)
-                                # 若 DB 中有此任務的舊記錄，重置為 pending 以便重新處理
                                 db_manager.execute_query(
                                     "UPDATE conversion_tasks SET status='pending', is_processing=FALSE, "
                                     "retry_count=0, error_message='Incomplete output, re-queued by scanner' "
@@ -143,8 +142,20 @@ class ScanDaemon(BaseDaemon):
                                     (str(file_path),)
                                 )
                             else:
-                                # 長度相符，略過
-                                continue
+                                continue  # 長度相符，略過
+
+                        # ── 輸出檔不存在：處理 completed 但輸出遺失的情況 ────────────
+                        elif db_result and db_result[0].get('status') == 'completed':
+                            self.logger.warning(
+                                f"Output missing for completed task, re-queuing: {file_path.name}"
+                            )
+                            db_manager.execute_query(
+                                "UPDATE conversion_tasks SET status='pending', is_processing=FALSE, "
+                                "retry_count=0, error_message='Output file missing, re-queued by scanner' "
+                                "WHERE input_path=%s",
+                                (str(file_path),)
+                            )
+                            continue
 
                         # 使用 INSERT IGNORE 防止 TOCTOU race condition：
                         # 若兩個 scan 程序同時掃到同一個檔案，不會因 UNIQUE 限制而拋出例外

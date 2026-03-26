@@ -172,13 +172,37 @@ class TestScanDirectoryFiltering(unittest.TestCase):
 
     @patch('daemons.scan_daemon.db_manager')
     @patch('daemons.scan_daemon.get_video_info')
-    def test_skips_already_in_db(self, mock_info, mock_db):
-        """已在 DB 中的路徑不應再呼叫 ffprobe 或 INSERT"""
+    def test_skips_already_in_db_pending(self, mock_info, mock_db):
+        """DB 中已有 pending 記錄時，不應呼叫 ffprobe"""
         (self.input_dir / 'existing.mp4').touch()
-        mock_db.execute_query.return_value = [{'id': 1}]  # 已存在
+        mock_db.execute_query.return_value = [{'id': 1, 'status': 'pending'}]
         daemon = self._make_daemon()
         daemon.scan_directory()
         mock_info.assert_not_called()
+
+    @patch('daemons.scan_daemon.db_manager')
+    @patch('daemons.scan_daemon.get_video_info')
+    def test_skips_already_in_db_processing(self, mock_info, mock_db):
+        """DB 中已有 processing 記錄時，不應呼叫 ffprobe"""
+        (self.input_dir / 'existing.mp4').touch()
+        mock_db.execute_query.return_value = [{'id': 1, 'status': 'processing'}]
+        daemon = self._make_daemon()
+        daemon.scan_directory()
+        mock_info.assert_not_called()
+
+    @patch('daemons.scan_daemon.db_manager')
+    @patch('daemons.scan_daemon.get_video_info')
+    def test_requeues_completed_with_missing_output(self, mock_info, mock_db):
+        """DB 中 completed 但輸出檔不存在時，應重置為 pending"""
+        (self.input_dir / 'existing.mp4').touch()
+        # 輸出檔不建立（模擬遺失）
+        mock_db.execute_query.return_value = [{'id': 1, 'status': 'completed'}]
+        mock_info.return_value = {'width': 1920, 'height': 1080, 'resolution': '1920x1080'}
+        daemon = self._make_daemon()
+        daemon.scan_directory()
+        update_calls = [c for c in mock_db.execute_query.call_args_list
+                        if 'UPDATE' in str(c) and 'pending' in str(c)]
+        self.assertGreater(len(update_calls), 0)
 
     @patch('daemons.scan_daemon.db_manager')
     @patch('daemons.scan_daemon.get_video_info')
