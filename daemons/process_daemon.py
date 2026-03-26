@@ -238,7 +238,7 @@ class ProcessDaemon(BaseDaemon):
                         self.logger.warning(
                             f"Task {task_id}: Could not verify output duration (ffprobe returned 0), keeping file"
                         )
-                    elif (src_dur - out_dur) > self.duration_threshold:
+                    elif abs(src_dur - out_dur) > self.duration_threshold:
                         error_msg = (
                             f"Incomplete output: src={src_dur:.1f}s, out={out_dur:.1f}s, "
                             f"diff={src_dur - out_dur:.1f}s > threshold={self.duration_threshold}s"
@@ -263,7 +263,7 @@ class ProcessDaemon(BaseDaemon):
             self.processing_progress['tasks_failed'] += 1
             self.processing_progress['errors'].append(error_msg)
         finally:
-            self.release_task_lock(task_id, worker_id)
+            pass  # 鎖的釋放由 worker() 統一管理，確保任何例外路徑都能釋放
     
     def worker(self, worker_id):
         """工作執行緒"""
@@ -274,18 +274,25 @@ class ProcessDaemon(BaseDaemon):
                 task_id = self.task_queue.get(timeout=1)
             except queue.Empty:
                 continue
+            lock_acquired = False
             try:
                 # 取得 DB 層級的任務鎖，防止多 worker（或跨程序）同時處理同一任務；
                 # 若鎖取得失敗（任務已被其他 worker 取走），直接略過
                 if not self.acquire_task_lock(task_id, worker_id):
                     self.logger.debug(f"Worker {worker_id}: task {task_id} already locked, skipping")
                     continue
+                lock_acquired = True
                 with self.worker_locks[worker_id]:
                     self.process_task(task_id, worker_id)
             except Exception as e:
                 self.logger.error(f"Worker {worker_id} error: {str(e)}")
                 time.sleep(1)
             finally:
+                # release_task_lock 集中在 worker() 管理：process_task() 內部任何例外、
+                # worker_locks 操作失敗等情況都能確保 is_processing 旗標被清除，
+                # 避免 cleanup_stale_tasks() 誤判為卡住任務
+                if lock_acquired:
+                    self.release_task_lock(task_id, worker_id)
                 # 無論成功、失敗或例外，都必須呼叫 task_done()，
                 # 否則 queue 內部計數器不會歸零，若未來使用 join() 會導致永久阻塞
                 self.task_queue.task_done()
