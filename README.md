@@ -77,7 +77,8 @@ video-converter/
 │                              #   顯示 daemon PID/運行時間、掃描/處理進度、任務統計、進度條
 │                              #   支援持續監控（-c）與單次顯示兩種模式
 │
-├── daemon_ctl.py              # 統一管理腳本：scan/process/all 的 start/stop/restart/status
+├── daemon_ctl.py              # 統一管理腳本：scan/process/api 的 start/stop/restart/status
+│                              #   all 指令同時操作 scan 和 process（不含 api）
 ├── start_api_server.py        # 啟動腳本：啟動 Flask API 伺服器
 │
 ├── scripts/
@@ -176,21 +177,24 @@ cp .env.sample .env
 # 啟動
 python3 daemon_ctl.py scan start
 python3 daemon_ctl.py process start
-python3 daemon_ctl.py all start
-python3 start_api_server.py --foreground &
+python3 daemon_ctl.py api start
+python3 daemon_ctl.py all start        # scan + process（不含 api）
 
 # 停止
 python3 daemon_ctl.py scan stop
 python3 daemon_ctl.py process stop
+python3 daemon_ctl.py api stop
 python3 daemon_ctl.py all stop
 
 # 重新啟動
 python3 daemon_ctl.py scan restart
 python3 daemon_ctl.py process restart
+python3 daemon_ctl.py api restart
 
 # 查看狀態
 python3 daemon_ctl.py scan status
 python3 daemon_ctl.py process status
+python3 daemon_ctl.py api status
 python3 daemon_ctl.py all status
 ```
 
@@ -210,10 +214,11 @@ python3 daemon_ctl.py all status
    Workers    : 1/1  |  Errors: 0
 ```
 
-所有子指令也支援 `--foreground`（或 `-f`）旗標，在前景執行（適合除錯或 systemd 管理）：
+所有指令也支援 `--foreground`（或 `-f`）旗標，在前景執行（適合除錯或 systemd 管理）：
 
 ```bash
 python3 daemon_ctl.py scan start --foreground
+python3 daemon_ctl.py api start -f
 python3 daemon_ctl.py process restart -f
 ```
 

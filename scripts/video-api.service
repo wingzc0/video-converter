@@ -11,7 +11,7 @@ Group={{SERVICE_USER}}
 WorkingDirectory={{INSTALL_DIR}}
 EnvironmentFile={{INSTALL_DIR}}/.env
 Environment=PYTHONUNBUFFERED=1
-ExecStart=/usr/bin/python3 {{INSTALL_DIR}}/start_api_server.py --foreground
+ExecStart=/usr/bin/python3 {{INSTALL_DIR}}/daemon_ctl.py api start --foreground
 Restart=on-failure
 RestartSec=10
 TimeoutStopSec=15

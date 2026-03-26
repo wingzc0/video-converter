@@ -8,13 +8,14 @@ Daemon 統一管理腳本
 target:
   scan      掃描 daemon
   process   處理 daemon
-  all       同時操作兩個 daemon
+  api       API 伺服器
+  all       同時操作 scan 和 process（不含 api）
 
 command（預設 start）:
-  start     啟動 daemon
-  stop      停止 daemon
-  restart   重新啟動 daemon
-  status    顯示 daemon 狀態
+  start     啟動
+  stop      停止
+  restart   重新啟動
+  status    顯示狀態
 
 選項:
   --foreground, -f   在前景執行（適合除錯或 systemd 直接管理）
@@ -22,6 +23,8 @@ command（預設 start）:
 範例:
   python daemon_ctl.py scan
   python daemon_ctl.py process start --foreground
+  python daemon_ctl.py api start
+  python daemon_ctl.py api status
   python daemon_ctl.py all stop
   python daemon_ctl.py all status
   python daemon_ctl.py scan restart -f
@@ -51,6 +54,130 @@ def make_process_daemon():
     check_interval = int(os.getenv('CHECK_INTERVAL', '60'))
     max_workers = int(os.getenv('MAX_WORKERS', '2'))
     return ProcessDaemon(check_interval=check_interval, max_workers=max_workers)
+
+
+# ---------------------------------------------------------------------------
+# API server 管理（不透過 BaseDaemon，用 PID 檔自行管理）
+# ---------------------------------------------------------------------------
+
+def _api_pid_file():
+    run_dir = os.getenv('VIDEO_CONVERTER_RUN_DIR', './run')
+    return Path(run_dir) / 'api.pid'
+
+
+def _api_log_file():
+    return Path(os.getenv('API_SERVER_LOG_FILE', './log/api.log'))
+
+
+def _api_error_log_file():
+    return Path(os.getenv('API_SERVER_ERROR_LOG_FILE', './log/api_error.log'))
+
+
+def _read_api_pid():
+    pid_file = _api_pid_file()
+    if not pid_file.exists():
+        return None
+    try:
+        pid = int(pid_file.read_text().strip())
+        # 確認程序仍在執行
+        os.kill(pid, 0)
+        return pid
+    except (ValueError, ProcessLookupError, PermissionError):
+        return None
+
+
+def cmd_api_start(foreground=False):
+    if _read_api_pid():
+        print("api_server is already running.")
+        return
+
+    pid_file = _api_pid_file()
+    log_file = _api_log_file()
+    err_file = _api_error_log_file()
+
+    print(f"Starting api_server in {'foreground' if foreground else 'background'} mode")
+    print(f"PID file: {pid_file}")
+    print(f"Log file: {log_file}")
+    print(f"Error log file: {err_file}")
+
+    if foreground:
+        # 前景模式：寫入 PID 檔後直接啟動
+        print(f"PID: {os.getpid()}")
+        pid_file.parent.mkdir(parents=True, exist_ok=True)
+        pid_file.write_text(str(os.getpid()))
+        try:
+            from api.server import start_api_server
+            start_api_server()
+        finally:
+            pid_file.unlink(missing_ok=True)
+        return
+
+    # 背景啟動：用 subprocess.Popen 啟動 --foreground 子程序（子程序自己寫 PID 檔）
+    import subprocess
+    log_file.parent.mkdir(parents=True, exist_ok=True)
+    err_file.parent.mkdir(parents=True, exist_ok=True)
+    pid_file.parent.mkdir(parents=True, exist_ok=True)
+
+    script = str(Path(__file__).resolve())
+    with open(log_file, 'a') as out, open(err_file, 'a') as err:
+        proc = subprocess.Popen(
+            [sys.executable, script, 'api', 'start', '--foreground'],
+            stdout=out,
+            stderr=err,
+            start_new_session=True,
+        )
+
+    # 等子程序寫入 PID 檔（最多等 5 秒）
+    for _ in range(10):
+        time.sleep(0.5)
+        if pid_file.exists():
+            print(f"PID: {pid_file.read_text().strip()}")
+            return
+    print("Warning: api_server may not have started correctly. Check log for details.")
+
+
+def cmd_api_stop():
+    pid = _read_api_pid()
+    if not pid:
+        print("api_server is not running.")
+        return
+    import signal as _signal
+    print(f"Stopping api_server (PID: {pid})...")
+    try:
+        os.kill(pid, _signal.SIGTERM)
+        for _ in range(10):
+            time.sleep(1)
+            try:
+                os.kill(pid, 0)
+            except ProcessLookupError:
+                break
+        else:
+            os.kill(pid, _signal.SIGKILL)
+            print("api_server force killed.")
+        pid_file = _api_pid_file()
+        if pid_file.exists():
+            pid_file.unlink()
+        print("api_server stopped successfully.")
+    except ProcessLookupError:
+        print("api_server already stopped.")
+        _api_pid_file().unlink(missing_ok=True)
+
+
+def cmd_api_restart(foreground=False):
+    cmd_api_stop()
+    time.sleep(1)
+    cmd_api_start(foreground)
+
+
+def cmd_api_status():
+    pid = _read_api_pid()
+    host = os.getenv('API_SERVER_HOST', '0.0.0.0')
+    port = os.getenv('API_SERVER_PORT', '5000')
+    if pid:
+        print(f"✅ api_server: running (PID: {pid})")
+        print(f"   Endpoint   : http://{host}:{port}")
+    else:
+        print(f"❌ api_server: stopped")
 
 
 # ---------------------------------------------------------------------------
@@ -143,7 +270,7 @@ def cmd_status_process(daemon):
 USAGE = """\
 Usage: python daemon_ctl.py <target> [command] [--foreground|-f]
 
-  target:   scan | process | all
+  target:   scan | process | api | all (scan+process only)
   command:  start (default) | stop | restart | status
   -f / --foreground   run in foreground
 """
@@ -162,7 +289,7 @@ def main():
     target = args[0]
     command = args[1] if len(args) > 1 else 'start'
 
-    if target not in ('scan', 'process', 'all'):
+    if target not in ('scan', 'process', 'api', 'all'):
         print(f"Unknown target: {target!r}\n{USAGE}")
         sys.exit(1)
 
@@ -170,22 +297,33 @@ def main():
         print(f"Unknown command: {command!r}\n{USAGE}")
         sys.exit(1)
 
-    # 'all' + foreground 不合理（兩個 foreground 無法同時跑）
+    # 'all' + foreground 不合理（多個 foreground 無法同時跑）
     if target == 'all' and foreground and command in ('start', 'restart'):
         print("Error: --foreground cannot be used with target 'all'")
         sys.exit(1)
 
+    # api target 直接處理
+    if target == 'api':
+        if command == 'start':
+            cmd_api_start(foreground)
+        elif command == 'stop':
+            cmd_api_stop()
+        elif command == 'restart':
+            cmd_api_restart(foreground)
+        elif command == 'status':
+            cmd_api_status()
+        return
+
+    # all = scan + process（不含 api）
     targets = ['scan', 'process'] if target == 'all' else [target]
 
-    # start/restart 會觸發 DaemonContext double-fork，父程序在 fork 後 exit。
-    # 若同時啟動多個 daemon，必須用獨立子程序各自啟動，否則第一個啟動後
-    # 父程序已結束，第二個永遠不會執行。
+    # start/restart 用 subprocess 各自啟動，避免 DaemonContext double-fork 吃掉父程序
     if target == 'all' and command in ('start', 'restart'):
         import subprocess
         script = str(Path(__file__).resolve())
         for t in targets:
             proc = subprocess.Popen([sys.executable, script, t, command])
-            proc.wait()  # 等待該子程序完成啟動（fork 並退出）後再啟動下一個
+            proc.wait()
         return
 
     for t in targets:
