@@ -191,7 +191,7 @@ def cmd_cleanup_stale(hours=24):
     tasks = db_manager.execute_query(
         """SELECT id FROM conversion_tasks
            WHERE status='processing' AND is_processing=TRUE
-           AND (start_time IS NULL OR start_time < %s)""",
+           AND COALESCE(start_time, updated_at, created_at) < %s""",
         (stale_time,), fetch=True
     )
     if not tasks:
