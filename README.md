@@ -274,11 +274,11 @@ python3 main.py --cleanup-stale --stale-hours 2
 建立 `/etc/logrotate.d/video-converter`，內容如下（請將路徑替換為實際安裝目錄）：
 
 ```
-/opt/bcvnas-converter/log/scanner.log
-/opt/bcvnas-converter/log/scanner_error.log
-/opt/bcvnas-converter/log/processor.log
-/opt/bcvnas-converter/log/processor_error.log
-/opt/bcvnas-converter/log/api.log {
+/opt/video-converter/log/scanner.log
+/opt/video-converter/log/scanner_error.log
+/opt/video-converter/log/processor.log
+/opt/video-converter/log/processor_error.log
+/opt/video-converter/log/api.log {
     daily
     rotate 30
     compress
