@@ -3,7 +3,7 @@ import threading
 from datetime import datetime, timedelta
 from .base_daemon import BaseDaemon
 from db_manager import db_manager
-from converter import get_video_info
+from converter import get_video_info, get_video_duration
 from pathlib import Path
 import os
 
@@ -32,6 +32,11 @@ class ScanDaemon(BaseDaemon):
             Path(d.strip()).resolve()
             for d in raw_ignore.split(',') if d.strip()
         ]
+
+        # 輸出檔長度驗證：若輸出檔時長比原始檔短超過此閾值（秒），視為不完整，重新加入轉檔
+        # 設為 0 可停用長度比對（只要輸出檔存在就略過）
+        self.duration_threshold = float(os.getenv('DURATION_THRESHOLD', '2.0'))
+
         self.scan_progress = {
             'status': 'idle',
             'last_scan_time': None,
@@ -53,6 +58,10 @@ class ScanDaemon(BaseDaemon):
         self.logger.info(f"Scan daemon initialized with interval: {self.scan_interval} seconds")
         self.logger.info(f"Input directory: {self.base_input_dir}")
         self.logger.info(f"Output directory: {self.base_output_dir}")
+        if self.duration_threshold > 0:
+            self.logger.info(f"Duration validation: enabled (threshold={self.duration_threshold}s)")
+        else:
+            self.logger.info("Duration validation: disabled")
     
     def scan_directory(self):
         """掃描目錄並添加新任務"""
@@ -111,9 +120,31 @@ class ScanDaemon(BaseDaemon):
                         output_dir.mkdir(parents=True, exist_ok=True)
                         output_path = output_dir / f"480p_{filename}"
 
-                        # 輸出檔已存在則略過，避免重複加入任務
+                        # 輸出檔已存在則進行長度驗證
                         if output_path.exists():
-                            continue
+                            if self.duration_threshold <= 0:
+                                # 停用驗證，直接略過
+                                continue
+                            src_dur = get_video_duration(str(file_path))
+                            out_dur = get_video_duration(str(output_path))
+                            if src_dur > 0 and (src_dur - out_dur) > self.duration_threshold:
+                                # 輸出檔時長明顯偏短，視為不完整，刪除後重新加入任務
+                                self.logger.warning(
+                                    f"Incomplete output detected: {output_path.name} "
+                                    f"(src={src_dur:.1f}s, out={out_dur:.1f}s, "
+                                    f"diff={src_dur - out_dur:.1f}s > threshold={self.duration_threshold}s)"
+                                )
+                                output_path.unlink(missing_ok=True)
+                                # 若 DB 中有此任務的舊記錄，重置為 pending 以便重新處理
+                                db_manager.execute_query(
+                                    "UPDATE conversion_tasks SET status='pending', is_processing=FALSE, "
+                                    "retry_count=0, error_message='Incomplete output, re-queued by scanner' "
+                                    "WHERE input_path=%s",
+                                    (str(file_path),)
+                                )
+                            else:
+                                # 長度相符，略過
+                                continue
 
                         # 使用 INSERT IGNORE 防止 TOCTOU race condition：
                         # 若兩個 scan 程序同時掃到同一個檔案，不會因 UNIQUE 限制而拋出例外

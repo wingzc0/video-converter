@@ -182,18 +182,75 @@ class TestScanDirectoryFiltering(unittest.TestCase):
 
     @patch('daemons.scan_daemon.db_manager')
     @patch('daemons.scan_daemon.get_video_info')
-    def test_skips_if_output_file_exists(self, mock_info, mock_db):
-        """輸出檔已存在時不應加入 DB"""
+    @patch('daemons.scan_daemon.get_video_duration')
+    def test_skips_if_output_duration_matches(self, mock_dur, mock_info, mock_db):
+        """輸出檔存在且長度與原始一致時，應略過不加入 DB"""
         (self.input_dir / 'video.mp4').touch()
-        # 建立對應的輸出檔
         (self.output_dir / '480p_video.mp4').touch()
-        mock_db.execute_query.return_value = []  # 未在 DB
+        mock_db.execute_query.return_value = []
         mock_info.return_value = {'width': 1920, 'height': 1080, 'resolution': '1920x1080'}
+        mock_dur.side_effect = [100.0, 99.5]  # src=100s, out=99.5s, diff=0.5s < threshold=2.0s
         daemon = self._make_daemon()
         daemon.scan_directory()
         insert_calls = [c for c in mock_db.execute_query.call_args_list
                         if 'INSERT' in str(c)]
         self.assertEqual(len(insert_calls), 0)
+
+    @patch('daemons.scan_daemon.db_manager')
+    @patch('daemons.scan_daemon.get_video_info')
+    @patch('daemons.scan_daemon.get_video_duration')
+    def test_requeues_if_output_too_short(self, mock_dur, mock_info, mock_db):
+        """輸出檔存在但比原始短超過 threshold，應重置 DB 狀態並刪除輸出檔"""
+        src_file = self.input_dir / 'video.mp4'
+        src_file.touch()
+        out_file = self.output_dir / '480p_video.mp4'
+        out_file.touch()
+        mock_db.execute_query.side_effect = [[], 1, 1]  # SELECT, UPDATE, INSERT (if re-queued)
+        mock_info.return_value = {'width': 1920, 'height': 1080, 'resolution': '1920x1080'}
+        mock_dur.side_effect = [100.0, 50.0]  # src=100s, out=50s, diff=50s >> threshold=2.0s
+        daemon = self._make_daemon()
+        daemon.scan_directory()
+        # 輸出檔應已被刪除
+        self.assertFalse(out_file.exists())
+        # DB 應有 UPDATE (reset to pending)
+        update_calls = [c for c in mock_db.execute_query.call_args_list
+                        if 'UPDATE' in str(c)]
+        self.assertGreater(len(update_calls), 0)
+
+    @patch('daemons.scan_daemon.db_manager')
+    @patch('daemons.scan_daemon.get_video_info')
+    def test_skips_output_duration_check_when_threshold_zero(self, mock_info, mock_db):
+        """DURATION_THRESHOLD=0 時，輸出檔存在即略過，不呼叫 get_video_duration"""
+        import importlib
+        (self.input_dir / 'video.mp4').touch()
+        (self.output_dir / '480p_video.mp4').touch()
+        mock_db.execute_query.return_value = []
+        mock_info.return_value = {'width': 1920, 'height': 1080, 'resolution': '1920x1080'}
+        with patch.dict('os.environ', {'DURATION_THRESHOLD': '0'}):
+            import daemons.scan_daemon as sd_mod
+            importlib.reload(sd_mod)
+            daemon_cls = sd_mod.ScanDaemon
+            import tempfile
+            with tempfile.TemporaryDirectory() as tmp:
+                from pathlib import Path as P
+                inp = P(tmp) / 'input'
+                inp.mkdir()
+                out = P(tmp) / 'output'
+                out.mkdir()
+                (inp / 'video.mp4').touch()
+                (out / '480p_video.mp4').touch()
+                with patch.dict('os.environ', {
+                    'INPUT_DIRECTORY': str(inp),
+                    'OUTPUT_DIRECTORY': str(out),
+                    'DURATION_THRESHOLD': '0',
+                }):
+                    importlib.reload(sd_mod)
+                    daemon = sd_mod.ScanDaemon(scan_interval=60)
+                with patch('daemons.scan_daemon.get_video_duration') as mock_dur, \
+                     patch('daemons.scan_daemon.db_manager') as mock_db2:
+                    mock_db2.execute_query.return_value = []
+                    daemon.scan_directory()
+                    mock_dur.assert_not_called()
 
 
 if __name__ == '__main__':

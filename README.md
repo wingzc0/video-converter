@@ -151,6 +151,7 @@ video-converter/
 | `MAX_RETRIES` | 失敗任務最大重試次數（預設：`3`） |
 | `RETRY_INTERVAL_CYCLES` | 每幾個 check cycle 執行一次重試（預設：`10`） |
 | `STALE_HOURS` | 任務卡在 processing 超過幾小時視為過時（預設：`1`） |
+| `DURATION_THRESHOLD` | 輸出檔長度驗證閾值（秒）：輸出比原始短超過此值則視為不完整並重新加入轉檔佇列；設 `0` 停用驗證（預設：`2.0`） |
 | `API_SERVER_HOST`、`API_SERVER_PORT`、`API_SERVER_URL` | API 伺服器設定 |
 | `LOG_LEVEL` | 日誌等級 |
 
