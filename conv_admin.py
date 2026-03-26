@@ -146,14 +146,12 @@ def cmd_retry_failed(max_retries=3):
         print("No failed tasks eligible for retry.")
         return
     for t in tasks:
-        new_count = t['retry_count'] + 1
         db_manager.execute_query(
             """UPDATE conversion_tasks
                SET status='pending', is_processing=FALSE,
-                   retry_count=%s,
                    error_message=CONCAT('Retry #',%s,': ',COALESCE(error_message,''))
                WHERE id=%s""",
-            (new_count, new_count, t['id'])
+            (t['retry_count'], t['id'])
         )
     print(f"Retried {len(tasks)} task(s) (max_retries={max_retries}).")
 

@@ -107,7 +107,7 @@ class ScanDaemon(BaseDaemon):
                             )
                             db_manager.execute_query(
                                 "UPDATE conversion_tasks SET status='pending', is_processing=FALSE, "
-                                "retry_count=0, error_message='Output file missing, re-queued by scanner' "
+                                "error_message='Output file missing, re-queued by scanner' "
                                 "WHERE input_path=%s",
                                 (str(file_path),)
                             )

@@ -134,6 +134,9 @@ class ProcessDaemon(BaseDaemon):
             if status in ['completed', 'failed']:
                 updates.append('end_time = CURRENT_TIMESTAMP')
 
+            if status == 'failed':
+                updates.append('retry_count = COALESCE(retry_count, 0) + 1')
+
             if not updates:
                 # updates 為空表示呼叫者未傳入任何要更新的欄位，跳過 UPDATE 避免執行空語句
                 return
@@ -319,16 +322,14 @@ class ProcessDaemon(BaseDaemon):
             retried = 0
             for task in failed_tasks:
                 task_id = task['id']
-                new_retry_count = task['retry_count'] + 1
                 update_query = '''
                 UPDATE conversion_tasks
                 SET status = 'pending',
                     is_processing = FALSE,
-                    retry_count = %s,
                     error_message = CONCAT('Retry #', %s, ': ', COALESCE(error_message, ''))
                 WHERE id = %s
                 '''
-                db_manager.execute_query(update_query, (new_retry_count, new_retry_count, task_id))
+                db_manager.execute_query(update_query, (task['retry_count'], task_id))
                 retried += 1
 
             if retried:
