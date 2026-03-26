@@ -10,6 +10,7 @@ target:
   process   處理 daemon
   api       API 伺服器
   all       同時操作 scan 和 process（不含 api）
+            ※ status 指令會額外顯示 api 狀態
 
 command（預設 start）:
   start     啟動
@@ -75,14 +76,12 @@ def _api_error_log_file():
 
 def _read_api_pid():
     pid_file = _api_pid_file()
-    if not pid_file.exists():
-        return None
     try:
         pid = int(pid_file.read_text().strip())
         # 確認程序仍在執行
         os.kill(pid, 0)
         return pid
-    except (ValueError, ProcessLookupError, PermissionError):
+    except (FileNotFoundError, ValueError, ProcessLookupError, PermissionError):
         return None
 
 
@@ -155,8 +154,7 @@ def cmd_api_stop():
             os.kill(pid, _signal.SIGKILL)
             print("api_server force killed.")
         pid_file = _api_pid_file()
-        if pid_file.exists():
-            pid_file.unlink()
+        pid_file.unlink(missing_ok=True)
         print("api_server stopped successfully.")
     except ProcessLookupError:
         print("api_server already stopped.")
@@ -344,6 +342,9 @@ def main():
             cmd_restart(daemon, name, foreground)
         elif command == 'status':
             status_fn(daemon)
+
+    if target == 'all' and command == 'status':
+        cmd_api_status()
 
 
 if __name__ == '__main__':
