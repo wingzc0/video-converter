@@ -141,6 +141,7 @@ class ScanDaemon(BaseDaemon):
                                     "WHERE input_path=%s",
                                     (str(file_path),)
                                 )
+                                continue  # DB 已重置為 pending，無需再 INSERT
                             else:
                                 continue  # 長度相符，略過
 
