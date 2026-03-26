@@ -1,0 +1,16 @@
+{
+  "daemon_type": "process",
+  "status": "processing",
+  "pid": 2104095,
+  "uptime": 3240.2105832099915,
+  "last_update": "2026-03-26T13:23:24.619471",
+  "error_count": 0,
+  "errors": [],
+  "last_check_time": "2026-03-26T13:19:25.012129",
+  "tasks_processing": 989,
+  "tasks_completed": 114,
+  "tasks_failed": 0,
+  "queue_size": 985,
+  "active_workers": 1,
+  "max_workers": 1
+}

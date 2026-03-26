@@ -1,0 +1,12 @@
+{
+  "daemon_type": "scan",
+  "status": "idle",
+  "pid": 2104092,
+  "uptime": 3240.226728439331,
+  "last_update": "2026-03-26T13:23:24.528607",
+  "error_count": 0,
+  "errors": [],
+  "last_scan_time": "2026-03-26T13:21:09.820258",
+  "files_scanned": 106091,
+  "tasks_added": 0
+}

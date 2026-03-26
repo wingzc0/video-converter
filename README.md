@@ -25,8 +25,7 @@
 ```
 video-converter/
 │
-├── main.py                    # 管理 / 診斷工具：daemon stop/restart/status、目錄預覽、任務統計、手動重試/清理
-│                              #   ⚠️ 轉檔邏輯已完全移至 daemon，本腳本不執行任何轉檔
+├── conv_admin.py              # 資料庫診斷與維護工具：目錄預覽、任務統計、手動重試/清理
 │
 ├── converter.py               # 核心 FFmpeg 封裝模組
 │                              #   get_video_info()     – 用 ffprobe 取得解析度與元數據
@@ -167,7 +166,7 @@ cp .env.sample .env
 
 ## 部署方式
 
-> ⚠️ **注意：轉檔邏輯已完全移至 daemon。`main.py` 已重寫為管理 / 診斷工具，不再執行轉檔。請使用以下 daemon 方式啟動轉檔。**
+> ⚠️ **注意：轉檔邏輯已完全移至 daemon。請使用以下 daemon 方式啟動轉檔。**
 
 ### 方式一：長駐 Daemon 程序（建議方式）
 
@@ -232,16 +231,12 @@ python monitor_daemons.py -c
 
 ---
 
-## 指令參數說明（`main.py`）
+## 指令參數說明（`conv_admin.py`）
 
-`main.py` 已重寫為**管理 / 診斷工具**，轉檔邏輯完全移至 daemon。每次只能使用一個指令：
+`conv_admin.py` 是**資料庫診斷與維護工具**，轉檔邏輯完全移至 daemon。每次只能使用一個指令：
 
 | 指令 | 說明 |
 |---|---|
-| `--daemon-status` | 顯示所有 daemon 狀態（含 PID、最後執行時間、任務計數） |
-| `--daemon-stop` | 停止 daemon |
-| `--daemon-restart` | 重新啟動 daemon |
-| `--daemon [scan\|process\|all]` | 指定對象 daemon（預設 all，搭配 stop/restart/status 使用） |
 | `--show-dirs` | 預覽輸入目錄結構（含忽略目錄標示） |
 | `--stats` | 顯示資料庫任務統計（總數、各狀態數量、平均耗時、失敗詳情） |
 | `--retry-failed` | 手動將失敗任務重置為 pending |
@@ -252,24 +247,17 @@ python monitor_daemons.py -c
 ## 使用範例
 
 ```bash
-# 查看所有 daemon 狀態
-python3 main.py --daemon-status
-
-# 停止 / 重啟特定 daemon
-python3 main.py --daemon-stop --daemon scan
-python3 main.py --daemon-restart --daemon process
-
 # 預覽目錄結構（診斷忽略目錄設定）
-python3 main.py --show-dirs
+python3 conv_admin.py --show-dirs
 
 # 查看任務統計
-python3 main.py --stats
+python3 conv_admin.py --stats
 
 # 手動重試失敗任務（最多重試 3 次）
-python3 main.py --retry-failed
+python3 conv_admin.py --retry-failed
 
 # 清除超過 2 小時未完成的過時任務
-python3 main.py --cleanup-stale --stale-hours 2
+python3 conv_admin.py --cleanup-stale --stale-hours 2
 ```
 
 ---
