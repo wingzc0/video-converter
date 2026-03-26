@@ -1,7 +1,7 @@
 [Unit]
-Description=Video Converter - Scan Daemon
+Description=Video Converter - Process Daemon
 Documentation=https://github.com/wingzc0/video-converter
-After=network.target mariadb.service
+After=network.target mariadb.service video-scanner.service
 Wants=mariadb.service
 
 [Service]
@@ -11,15 +11,15 @@ Group={{SERVICE_USER}}
 WorkingDirectory={{INSTALL_DIR}}
 EnvironmentFile={{INSTALL_DIR}}/.env
 Environment=PYTHONUNBUFFERED=1
-ExecStart=/usr/bin/python3 {{INSTALL_DIR}}/start_scan_daemon.py start --foreground
-ExecStop=/usr/bin/python3 {{INSTALL_DIR}}/start_scan_daemon.py stop
+ExecStart=/usr/bin/python3 {{INSTALL_DIR}}/start_process_daemon.py start --foreground
+ExecStop=/usr/bin/python3 {{INSTALL_DIR}}/start_process_daemon.py stop
 Restart=on-failure
 RestartSec=15
-TimeoutStopSec=30
+TimeoutStopSec=60
 KillMode=mixed
 StandardOutput=journal
 StandardError=journal
-SyslogIdentifier=video-scanner
+SyslogIdentifier=video-processor
 
 [Install]
 WantedBy=multi-user.target

@@ -82,8 +82,10 @@ video-converter/
 ├── start_api_server.py        # 啟動腳本：啟動 Flask API 伺服器
 │
 ├── scripts/
-│   ├── install_daemons.sh     # Bash 安裝腳本：建立 /var/run、/var/log 目錄，安裝 systemd 服務單元
-│   └── video-scanner.service  # 掃描 daemon 的 systemd 服務單元範本
+│   ├── install_daemons.sh     # 安裝腳本：將 service 模板替換後安裝至 /etc/systemd/system/
+│   ├── video-scanner.service  # scan_daemon 的 systemd 服務模板
+│   ├── video-processor.service # process_daemon 的 systemd 服務模板
+│   └── video-api.service      # API 伺服器的 systemd 服務模板
 │
 └── README.md                  # 本文件
 ```
@@ -274,34 +276,44 @@ python3 main.py --cleanup-stale --stale-hours 2
 
 ## Systemd 服務設定
 
-```ini
-[Unit]
-Description=Video Converter Service
-After=network.target mariadb.service
+`scripts/` 目錄下提供三個服務模板（以 `{{SERVICE_USER}}` / `{{INSTALL_DIR}}` 作為佔位符），透過安裝腳本自動替換後部署。
 
-[Service]
-Type=simple
-User=videoconverter
-Group=videoconverter
-WorkingDirectory=/path/to/video-converter
-Environment=PYTHONUNBUFFERED=1
-ExecStart=/usr/bin/python3 start_process_daemon.py --foreground
-Restart=on-failure
-RestartSec=30
-StandardOutput=journal
-StandardError=journal
-
-[Install]
-WantedBy=multi-user.target
-```
-
-啟用服務：
+### 快速安裝
 
 ```bash
-sudo systemctl daemon-reload
-sudo systemctl enable video-converter.service
-sudo systemctl start video-converter.service
+# 使用目前使用者與目前目錄（預設）
+bash scripts/install_daemons.sh
+
+# 自訂使用者與安裝路徑
+bash scripts/install_daemons.sh --user myuser --dir /opt/bcvnas-converter
+
+# 解除安裝
+bash scripts/install_daemons.sh --uninstall
 ```
+
+安裝後啟動服務：
+
+```bash
+sudo systemctl start video-scanner video-processor video-api
+
+# 查看狀態
+sudo systemctl status video-scanner video-processor video-api
+
+# 查看 log
+journalctl -u video-scanner  -f
+journalctl -u video-processor -f
+journalctl -u video-api       -f
+```
+
+### 服務說明
+
+| 服務 | 對應腳本 | 說明 |
+|---|---|---|
+| `video-scanner` | `start_scan_daemon.py` | 定期掃描目錄，發現新影片加入 DB |
+| `video-processor` | `start_process_daemon.py` | 從 DB 取出 pending 任務，呼叫 ffmpeg 轉檔 |
+| `video-api` | `start_api_server.py` | REST API + WebSocket 即時狀態推送 |
+
+> **注意**：`EnvironmentFile` 指向 `{{INSTALL_DIR}}/.env`，請確認 `.env` 已正確設定後再啟動服務。
 
 ---
 
