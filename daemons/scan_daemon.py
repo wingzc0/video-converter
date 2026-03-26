@@ -135,13 +135,16 @@ class ScanDaemon(BaseDaemon):
                                     f"diff={src_dur - out_dur:.1f}s > threshold={self.duration_threshold}s)"
                                 )
                                 output_path.unlink(missing_ok=True)
-                                db_manager.execute_query(
-                                    "UPDATE conversion_tasks SET status='pending', is_processing=FALSE, "
-                                    "retry_count=0, error_message='Incomplete output, re-queued by scanner' "
-                                    "WHERE input_path=%s",
-                                    (str(file_path),)
-                                )
-                                continue  # DB 已重置為 pending，無需再 INSERT
+                                if db_result:
+                                    # DB 有記錄：重置為 pending，process_daemon 會重新處理
+                                    db_manager.execute_query(
+                                        "UPDATE conversion_tasks SET status='pending', is_processing=FALSE, "
+                                        "retry_count=0, error_message='Incomplete output, re-queued by scanner' "
+                                        "WHERE input_path=%s",
+                                        (str(file_path),)
+                                    )
+                                    continue  # DB 已重置為 pending，無需再 INSERT
+                                # DB 無記錄：落入後續 INSERT 流程
                             else:
                                 continue  # 長度相符，略過
 

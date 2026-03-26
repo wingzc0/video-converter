@@ -224,12 +224,16 @@ class TestScanDirectoryFiltering(unittest.TestCase):
     @patch('daemons.scan_daemon.get_video_info')
     @patch('daemons.scan_daemon.get_video_duration')
     def test_requeues_if_output_too_short(self, mock_dur, mock_info, mock_db):
-        """輸出檔存在但比原始短超過 threshold，應重置 DB 狀態並刪除輸出檔"""
+        """輸出檔存在但比原始短超過 threshold 且 DB 有記錄，應重置 DB 狀態並刪除輸出檔"""
         src_file = self.input_dir / 'video.mp4'
         src_file.touch()
         out_file = self.output_dir / '480p_video.mp4'
         out_file.touch()
-        mock_db.execute_query.side_effect = [[], 1, 1]  # SELECT, UPDATE, INSERT (if re-queued)
+        # DB 有 completed 記錄
+        mock_db.execute_query.side_effect = [
+            [{'id': 1, 'status': 'completed'}],  # SELECT
+            1,                                    # UPDATE
+        ]
         mock_info.return_value = {'width': 1920, 'height': 1080, 'resolution': '1920x1080'}
         mock_dur.side_effect = [100.0, 50.0]  # src=100s, out=50s, diff=50s >> threshold=2.0s
         daemon = self._make_daemon()
@@ -275,6 +279,34 @@ class TestScanDirectoryFiltering(unittest.TestCase):
                     mock_db2.execute_query.return_value = []
                     daemon.scan_directory()
                     mock_dur.assert_not_called()
+
+
+    @patch('daemons.scan_daemon.db_manager')
+    @patch('daemons.scan_daemon.get_video_info')
+    @patch('daemons.scan_daemon.get_video_duration')
+    def test_inserts_if_output_too_short_and_no_db_record(self, mock_dur, mock_info, mock_db):
+        """輸出檔不完整且 DB 無記錄時，應刪除輸出檔並 INSERT（不應被 continue 跳過）"""
+        src_file = self.input_dir / 'video.mp4'
+        src_file.touch()
+        out_file = self.output_dir / '480p_video.mp4'
+        out_file.touch()
+        # DB 無記錄（SELECT 回傳空）
+        mock_db.execute_query.side_effect = [[], 1]  # SELECT → 空, INSERT → 1 row
+        mock_info.return_value = {'width': 1920, 'height': 1080, 'resolution': '1920x1080'}
+        mock_dur.side_effect = [100.0, 50.0]  # src=100s, out=50s，不完整
+        daemon = self._make_daemon()
+        daemon.scan_directory()
+        # 輸出檔應已被刪除
+        self.assertFalse(out_file.exists())
+        # 不應有 UPDATE（DB 無記錄）
+        update_calls = [c for c in mock_db.execute_query.call_args_list
+                        if 'UPDATE' in str(c)]
+        self.assertEqual(len(update_calls), 0)
+        # 應有 INSERT（重新加入佇列）
+        insert_calls = [c for c in mock_db.execute_query.call_args_list
+                        if 'INSERT' in str(c)]
+        self.assertGreater(len(insert_calls), 0)
+        self.assertEqual(daemon.scan_progress['tasks_added'], 1)
 
 
 if __name__ == '__main__':
