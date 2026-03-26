@@ -304,7 +304,7 @@ python3 main.py --cleanup-stale --stale-hours 2
 bash scripts/install_daemons.sh
 
 # 自訂使用者與安裝路徑
-bash scripts/install_daemons.sh --user myuser --dir /opt/bcvnas-converter
+bash scripts/install_daemons.sh --user myuser --dir /opt/video-converter
 
 # 解除安裝
 bash scripts/install_daemons.sh --uninstall
