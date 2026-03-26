@@ -233,11 +233,13 @@ class ProcessDaemon(BaseDaemon):
                             f"Task {task_id}: Could not read source duration (ffprobe returned 0), skipping validation"
                         )
                     elif out_dur == 0:
-                        # ffprobe 無法讀取輸出檔（NFS 暫時性問題或檔案尚未 flush），
-                        # 無法判斷是否完整，保留檔案並標記為完成
-                        self.logger.warning(
-                            f"Task {task_id}: Could not verify output duration (ffprobe returned 0), keeping file"
-                        )
+                        # ffprobe 無法讀取輸出檔，無法確認是否完整；
+                        # 標記為 failed 交由重試機制處理，避免靜默接受損毀輸出
+                        error_msg = "Could not verify output duration (ffprobe returned 0); marked for retry"
+                        self.logger.warning(f"Task {task_id}: {error_msg}")
+                        self.update_task_status(task_id, 'failed', error_message=error_msg)
+                        self.processing_progress['tasks_failed'] += 1
+                        return
                     elif abs(src_dur - out_dur) > self.duration_threshold:
                         error_msg = (
                             f"Incomplete output: src={src_dur:.1f}s, out={out_dur:.1f}s, "
