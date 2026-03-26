@@ -25,7 +25,8 @@
 ```
 video-converter/
 │
-├── main.py                    # ⚠️ 舊版 CLI 腳本（已不再維護，請改用 daemon 版本）
+├── main.py                    # 管理 / 診斷工具：daemon stop/restart/status、目錄預覽、任務統計、手動重試/清理
+│                              #   ⚠️ 轉檔邏輯已完全移至 daemon，本腳本不執行任何轉檔
 │
 ├── converter.py               # 核心 FFmpeg 封裝模組
 │                              #   get_video_info()     – 用 ffprobe 取得解析度與元數據
@@ -155,7 +156,7 @@ video-converter/
 
 ## 部署方式
 
-> ⚠️ **注意：`main.py` 為舊版 CLI 腳本，已不再維護。請使用以下 daemon 方式執行。**
+> ⚠️ **注意：轉檔邏輯已完全移至 daemon。`main.py` 已重寫為管理 / 診斷工具，不再執行轉檔。請使用以下 daemon 方式啟動轉檔。**
 
 ### 方式一：長駐 Daemon 程序（建議方式）
 
@@ -215,57 +216,42 @@ python monitor_daemons.py -c
 
 ## 指令參數說明（`main.py`）
 
-> ⚠️ `main.py` 為舊版腳本，已不再維護。以下僅供參考，請改用 daemon 版本。
+`main.py` 已重寫為**管理 / 診斷工具**，轉檔邏輯完全移至 daemon。每次只能使用一個指令：
 
-| 參數 | 說明 |
+| 指令 | 說明 |
 |---|---|
-| `--process-pending` | 處理 pending 任務（預設啟用） |
-| `--no-process-pending` | 不處理 pending 任務 |
-| `--retry-failed` | 重試失敗的任務（最多 3 次） |
-| `--cleanup-stale` | 清理過時的任務 |
-| `--stale-hours N` | 設定過時任務的時間閾值（小時，預設 24） |
-| `--scan-only` | 只掃描目錄並添加任務，不進行轉檔 |
-| `--process-only` | 只處理現有任務，不掃描新檔案 |
-| `--no-interactive` | 非互動模式，不顯示目錄結構也不等待確認 |
-| `--force` | 強制執行，跳過設定驗證 |
-| `--force-overwrite` | 覆蓋已存在的輸出檔案 |
-| `--skip-low-resolution` | 跳過解析度已在 480p 或以下的檔案 |
-| `--verbose` | 詳細輸出，顯示每個檔案的處理過程 |
-| `--quiet` | 安靜模式，只顯示錯誤訊息 |
-| `--max-workers N` | 覆蓋 `.env` 中的 `MAX_WORKERS` 設定 |
-| `--daemon-stop` | 停止所有背景 daemon（scan + process） |
-| `--daemon-restart` | 重新啟動所有背景 daemon（scan + process） |
-| `--daemon-status` | 顯示所有背景 daemon 的狀態 |
-| `--daemon [scan\|process\|all]` | 指定要操作的 daemon（預設：all） |
-
----
+| `--daemon-status` | 顯示所有 daemon 狀態（含 PID、最後執行時間、任務計數） |
+| `--daemon-stop` | 停止 daemon |
+| `--daemon-restart` | 重新啟動 daemon |
+| `--daemon [scan\|process\|all]` | 指定對象 daemon（預設 all，搭配 stop/restart/status 使用） |
+| `--show-dirs` | 預覽輸入目錄結構（含忽略目錄標示） |
+| `--stats` | 顯示資料庫任務統計（總數、各狀態數量、平均耗時、失敗詳情） |
+| `--retry-failed` | 手動將失敗任務重置為 pending |
+| `--max-retries N` | 重試次數上限（預設 3，搭配 --retry-failed 使用） |
+| `--cleanup-stale` | 手動將卡住的 processing 任務標為 failed |
+| `--stale-hours N` | 過時閾值（小時，預設 24，搭配 --cleanup-stale 使用） |
 
 ## 使用範例
 
 ```bash
-# 掃描並轉檔，非互動模式
-python main.py --no-interactive --verbose
+# 查看所有 daemon 狀態
+python3 main.py --daemon-status
 
-# 只掃描新檔案
-python main.py --scan-only --no-interactive
+# 停止 / 重啟特定 daemon
+python3 main.py --daemon-stop --daemon scan
+python3 main.py --daemon-restart --daemon process
 
-# 只處理現有任務
-python main.py --process-only --no-interactive
+# 預覽目錄結構（診斷忽略目錄設定）
+python3 main.py --show-dirs
 
-# 強制執行，忽略時間限制
-python main.py --force --no-interactive
+# 查看任務統計
+python3 main.py --stats
 
-# 強制覆蓋已存在的檔案
-python main.py --force-overwrite --no-interactive
+# 手動重試失敗任務（最多重試 3 次）
+python3 main.py --retry-failed
 
-# 處理所有 pending 任務
-python main.py --process-only --no-interactive --process-pending
-
-# 重試失敗的任務並清理過時任務
-python main.py --process-only --no-interactive --retry-failed --cleanup-stale
-
-# 只處理新掃描的檔案，不處理 pending 任務
-python main.py --no-process-pending --no-interactive
+# 清除超過 2 小時未完成的過時任務
+python3 main.py --cleanup-stale --stale-hours 2
 ```
 
 ---
