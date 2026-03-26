@@ -87,6 +87,7 @@ video-converter/
 │   ├── video-processor.service # process_daemon 的 systemd 服務模板
 │   └── video-api.service      # API 伺服器的 systemd 服務模板
 │
+├── .env.sample                # 設定範本（含所有可用變數與說明）
 └── README.md                  # 本文件
 ```
 
@@ -136,7 +137,14 @@ video-converter/
 
 ## 設定方式（透過 `.env`）
 
-所有執行期設定均來自環境變數：
+所有執行期設定均來自環境變數，透過專案根目錄的 `.env` 檔載入。
+
+**快速開始**：複製範本並填入實際值：
+
+```bash
+cp .env.sample .env
+# 編輯 .env，至少填入資料庫連線資訊與輸入/輸出目錄
+```
 
 | 變數 | 說明 |
 |---|---|
