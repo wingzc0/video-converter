@@ -1,7 +1,7 @@
 import time
 import threading
 from datetime import datetime, timedelta
-from .base_daemon import BaseDaemon
+from .base_daemon import BaseDaemon, _get_process_uptime
 from db_manager import db_manager
 from converter import get_video_info
 from pathlib import Path
@@ -209,7 +209,7 @@ class ScanDaemon(BaseDaemon):
             'files_scanned': self.scan_progress['files_scanned'],
             'tasks_added': self.scan_progress['tasks_added'],
             'error_count': len(self.scan_progress['errors']),
-            'uptime': time.time() - os.stat(f"/proc/{os.getpid()}").st_ctime if os.path.exists(f"/proc/{os.getpid()}") else 0
+            'uptime': _get_process_uptime(os.getpid()),
         }
 
     def get_current_status(self):

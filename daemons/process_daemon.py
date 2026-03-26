@@ -1,7 +1,7 @@
 import time
 import threading
 from datetime import datetime, timedelta
-from .base_daemon import BaseDaemon
+from .base_daemon import BaseDaemon, _get_process_uptime
 from db_manager import db_manager
 from converter import convert_to_480p, get_video_duration
 import queue
@@ -133,6 +133,9 @@ class ProcessDaemon(BaseDaemon):
             
             if status in ['completed', 'failed']:
                 updates.append('end_time = CURRENT_TIMESTAMP')
+                # 原子性清除 is_processing 旗標，縮小狀態更新與鎖釋放之間的視窗，
+                # 避免程序崩潰時任務卡在 is_processing=TRUE 直到 cleanup_stale_tasks 介入
+                updates.append('is_processing = FALSE')
 
             if status == 'failed':
                 updates.append('retry_count = COALESCE(retry_count, 0) + 1')
@@ -486,7 +489,7 @@ class ProcessDaemon(BaseDaemon):
             'queue_size': self.task_queue.qsize(),
             'active_workers': len([t for t in self.worker_threads if t.is_alive()]),
             'max_workers': self.max_workers,
-            'uptime': time.time() - os.stat(f"/proc/{os.getpid()}").st_ctime if os.path.exists(f"/proc/{os.getpid()}") else 0
+            'uptime': _get_process_uptime(os.getpid()),
         }
 
     def get_current_status(self):

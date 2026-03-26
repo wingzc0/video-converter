@@ -14,6 +14,19 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
+def _get_process_uptime(pid):
+    """回傳行程已執行秒數（使用 /proc/{pid}/stat 正確計算，而非 st_ctime）"""
+    try:
+        with open(f'/proc/{pid}/stat') as f:
+            start_ticks = int(f.read().split()[21])
+        clk_tck = os.sysconf(os.sysconf_names['SC_CLK_TCK'])
+        with open('/proc/uptime') as f:
+            system_uptime = float(f.read().split()[0])
+        return system_uptime - (start_ticks / clk_tck)
+    except Exception:
+        return 0
+
+
 class BaseDaemon(ABC):
     """
     基礎 daemon 類別，提供共用功能，支援從 .env 讀取 PID 和 log 路徑
@@ -70,7 +83,7 @@ class BaseDaemon(ABC):
             'daemon_type': self.name,
             'status': 'unknown',
             'pid': os.getpid(),
-            'uptime': time.time() - os.stat(f"/proc/{os.getpid()}").st_ctime if os.path.exists(f"/proc/{os.getpid()}") else 0,
+            'uptime': _get_process_uptime(os.getpid()),
             'last_update': datetime.now().isoformat(),
             'error_count': 0,
             'errors': []
@@ -410,7 +423,7 @@ class BaseDaemon(ABC):
                 return {
                     'status': 'running',
                     'pid': pid,
-                    'uptime': time.time() - os.stat(f"/proc/{pid}").st_ctime
+                    'uptime': _get_process_uptime(pid)
                 }
             else:
                 return {'status': 'stopped', 'pid': pid}
