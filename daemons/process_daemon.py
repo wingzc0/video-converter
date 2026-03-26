@@ -105,7 +105,7 @@ class ProcessDaemon(BaseDaemon):
             FROM conversion_tasks 
             WHERE status = 'pending' 
             AND is_processing = FALSE
-            ORDER BY created_at ASC
+            ORDER BY retry_count ASC, created_at ASC
             LIMIT 100
             '''
             return db_manager.execute_query(query, fetch=True)
