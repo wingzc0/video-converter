@@ -147,28 +147,42 @@ class ProcessDaemon(BaseDaemon):
             self.logger.error(f"Error updating task status: {str(e)}")
     
     def acquire_task_lock(self, task_id, worker_id):
-        """取得任務鎖"""
+        """取得任務鎖：原子性設定 is_processing=TRUE 並寫入 processing_lock"""
         try:
             # 原子性 UPDATE：WHERE 子句同時檢查 status='pending' 和 is_processing=FALSE，
             # 資料庫的行級鎖保證同一時間只有一個 UPDATE 能成功修改同一列；
             # 若另一個 worker 同時執行相同的 UPDATE，其中一個的 rows_affected 會是 0，
             # 從而安全地排除競爭條件，無需額外的應用層鎖
-            query = '''
-            UPDATE conversion_tasks 
-            SET is_processing = TRUE, start_time = CURRENT_TIMESTAMP
-            WHERE id = %s AND status = 'pending' AND is_processing = FALSE
-            '''
-            rows_affected = db_manager.execute_query(query, (task_id,))
-            return rows_affected > 0
+            rows_affected = db_manager.execute_query(
+                '''UPDATE conversion_tasks 
+                   SET is_processing = TRUE, start_time = CURRENT_TIMESTAMP
+                   WHERE id = %s AND status = 'pending' AND is_processing = FALSE''',
+                (task_id,)
+            )
+            if rows_affected > 0:
+                # 寫入 processing_lock 供追蹤（非并發控制用途，失敗不影響主流程）
+                try:
+                    db_manager.execute_query(
+                        "INSERT IGNORE INTO processing_lock (task_id, worker_id) VALUES (%s, %s)",
+                        (task_id, worker_id)
+                    )
+                except Exception:
+                    pass
+                return True
+            return False
         except Exception as e:
             self.logger.error(f"Error acquiring task lock: {str(e)}")
             return False
     
     def release_task_lock(self, task_id, worker_id):
-        """釋放任務鎖"""
+        """釋放任務鎖：清除 is_processing 旗標並移除 processing_lock 紀錄"""
         try:
-            query = "UPDATE conversion_tasks SET is_processing = FALSE WHERE id = %s"
-            db_manager.execute_query(query, (task_id,))
+            db_manager.execute_query(
+                "UPDATE conversion_tasks SET is_processing = FALSE WHERE id = %s", (task_id,)
+            )
+            db_manager.execute_query(
+                "DELETE FROM processing_lock WHERE task_id = %s", (task_id,)
+            )
             return True
         except Exception as e:
             self.logger.error(f"Error releasing task lock: {str(e)}")
@@ -252,6 +266,12 @@ class ProcessDaemon(BaseDaemon):
         while self.is_running:
             try:
                 task_id = self.task_queue.get(timeout=1)
+                # 取得 DB 層級的任務鎖，防止多 worker（或跨程序）同時處理同一任務；
+                # 若鎖取得失敗（任務已被其他 worker 取走），直接略過
+                if not self.acquire_task_lock(task_id, worker_id):
+                    self.logger.debug(f"Worker {worker_id}: task {task_id} already locked, skipping")
+                    self.task_queue.task_done()
+                    continue
                 with self.worker_locks[worker_id]:
                     self.process_task(task_id, worker_id)
                 self.task_queue.task_done()
