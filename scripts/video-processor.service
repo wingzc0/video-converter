@@ -11,8 +11,8 @@ Group={{SERVICE_USER}}
 WorkingDirectory={{INSTALL_DIR}}
 EnvironmentFile={{INSTALL_DIR}}/.env
 Environment=PYTHONUNBUFFERED=1
-ExecStart=/usr/bin/python3 {{INSTALL_DIR}}/start_process_daemon.py start --foreground
-ExecStop=/usr/bin/python3 {{INSTALL_DIR}}/start_process_daemon.py stop
+ExecStart=/usr/bin/python3 {{INSTALL_DIR}}/daemon_ctl.py process start --foreground
+ExecStop=/usr/bin/python3 {{INSTALL_DIR}}/daemon_ctl.py process stop
 Restart=on-failure
 RestartSec=15
 TimeoutStopSec=60

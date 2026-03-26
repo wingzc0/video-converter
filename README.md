@@ -77,8 +77,7 @@ video-converter/
 │                              #   顯示 daemon PID/運行時間、掃描/處理進度、任務統計、進度條
 │                              #   支援持續監控（-c）與單次顯示兩種模式
 │
-├── start_scan_daemon.py       # 管理腳本：ScanDaemon 的 start/stop/restart/status
-├── start_process_daemon.py    # 管理腳本：ProcessDaemon 的 start/stop/restart/status
+├── daemon_ctl.py              # 統一管理腳本：scan/process/all 的 start/stop/restart/status
 ├── start_api_server.py        # 啟動腳本：啟動 Flask API 伺服器
 │
 ├── scripts/
@@ -175,21 +174,24 @@ cp .env.sample .env
 
 ```bash
 # 啟動
-python3 start_scan_daemon.py
-python3 start_process_daemon.py
+python3 daemon_ctl.py scan start
+python3 daemon_ctl.py process start
+python3 daemon_ctl.py all start
 python3 start_api_server.py --foreground &
 
 # 停止
-python3 start_scan_daemon.py stop
-python3 start_process_daemon.py stop
+python3 daemon_ctl.py scan stop
+python3 daemon_ctl.py process stop
+python3 daemon_ctl.py all stop
 
 # 重新啟動
-python3 start_scan_daemon.py restart
-python3 start_process_daemon.py restart
+python3 daemon_ctl.py scan restart
+python3 daemon_ctl.py process restart
 
 # 查看狀態
-python3 start_scan_daemon.py status
-python3 start_process_daemon.py status
+python3 daemon_ctl.py scan status
+python3 daemon_ctl.py process status
+python3 daemon_ctl.py all status
 ```
 
 **`status` 輸出範例：**
@@ -211,8 +213,8 @@ python3 start_process_daemon.py status
 所有子指令也支援 `--foreground`（或 `-f`）旗標，在前景執行（適合除錯或 systemd 管理）：
 
 ```bash
-python3 start_scan_daemon.py start --foreground
-python3 start_process_daemon.py restart -f
+python3 daemon_ctl.py scan start --foreground
+python3 daemon_ctl.py process restart -f
 ```
 
 ### 方式二：即時監控
