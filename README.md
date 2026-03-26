@@ -76,7 +76,7 @@ video-converter/
 │                              #   顯示 daemon PID/運行時間、掃描/處理進度、任務統計、進度條
 │                              #   支援持續監控（-c）與單次顯示兩種模式
 │
-├── daemon_ctl.py              # 統一管理腳本：scan/process/api 的 start/stop/restart/status
+├── daemon_ctl.py              # 統一管理腳本：scan/process/api 的 start/stop/restart/status/log
 │                              #   all 指令同時操作 scan 和 process（不含 api）
 │                              #   api target 獨立控制 Flask API 伺服器
 │
@@ -220,6 +220,45 @@ python3 daemon_ctl.py scan start --foreground
 python3 daemon_ctl.py api start -f
 python3 daemon_ctl.py process restart -f
 ```
+
+### 查閱 Log（`log` 指令）
+
+`log` 指令使用 `less` 開啟 log 檔，支援自由捲動：
+
+```bash
+# 查閱一般 log（預設跳至末尾，可上下捲動）
+python3 daemon_ctl.py scan log
+python3 daemon_ctl.py process log
+python3 daemon_ctl.py api log
+python3 daemon_ctl.py all log       # 同時開啟所有 log
+python3 daemon_ctl.py log           # 同上（shortcut）
+
+# 查閱 error log（-e / --error）
+python3 daemon_ctl.py scan log -e
+python3 daemon_ctl.py all log -e
+
+# 持續追蹤新增內容（-f / --follow，類似 tail -f）
+python3 daemon_ctl.py process log -f
+python3 daemon_ctl.py api log -f -e
+```
+
+**less 操作快捷鍵：**
+
+| 按鍵 | 動作 |
+|------|------|
+| `↑` / `↓` / 滑鼠滾輪 | 上下捲動 |
+| `PgUp` / `PgDn` | 翻頁 |
+| `g` | 跳至開頭 |
+| `G` | 跳至末尾 |
+| `/關鍵字` | 向下搜尋 |
+| `?關鍵字` | 向上搜尋 |
+| `n` | 下一個搜尋結果 |
+| `N` | 上一個搜尋結果 |
+| `F` | 開始追蹤（follow 模式） |
+| `Ctrl+C` | 停止追蹤，切回捲動模式 |
+| `:n` | 切換到下一個檔案（`all log` 時） |
+| `:p` | 切換到上一個檔案（`all log` 時） |
+| `q` | 退出 |
 
 ### 方式二：即時監控
 
