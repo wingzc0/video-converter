@@ -269,17 +269,27 @@ python3 main.py --cleanup-stale --stale-hours 2
 
 ## Logrotate 設定
 
+日誌檔位於 `{{INSTALL_DIR}}/log/`，建議加入 logrotate 以避免檔案無限增長。
+
+建立 `/etc/logrotate.d/video-converter`，內容如下（請將路徑替換為實際安裝目錄）：
+
 ```
-/var/log/video-converter*.log {
+/opt/bcvnas-converter/log/scanner.log
+/opt/bcvnas-converter/log/scanner_error.log
+/opt/bcvnas-converter/log/processor.log
+/opt/bcvnas-converter/log/processor_error.log
+/opt/bcvnas-converter/log/api.log {
     daily
     rotate 30
     compress
     delaycompress
     missingok
     notifempty
-    create 644 www-data www-data
+    copytruncate
 }
 ```
+
+> `copytruncate` 可讓 daemon 不重啟也能正確輪替（直接截斷而非重新命名後建立新檔）。
 
 ---
 
