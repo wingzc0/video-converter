@@ -177,6 +177,17 @@ def main():
 
     targets = ['scan', 'process'] if target == 'all' else [target]
 
+    # start/restart 會觸發 DaemonContext double-fork，父程序在 fork 後 exit。
+    # 若同時啟動多個 daemon，必須用獨立子程序各自啟動，否則第一個啟動後
+    # 父程序已結束，第二個永遠不會執行。
+    if target == 'all' and command in ('start', 'restart'):
+        import subprocess
+        script = str(Path(__file__).resolve())
+        for t in targets:
+            proc = subprocess.Popen([sys.executable, script, t, command])
+            proc.wait()  # 等待該子程序完成啟動（fork 並退出）後再啟動下一個
+        return
+
     for t in targets:
         if t == 'scan':
             daemon = make_scan_daemon()
