@@ -245,16 +245,17 @@ def cmd_log(target, follow=False, error=False):
             print('\n'.join(lines[-50:]))
         return
 
-    # +F：follow 模式（tail -f 風格，但可 Ctrl+C 切回捲動）
+    # +F：follow 模式（tail -f 風格，Ctrl+C 停止追蹤切回捲動，F 繼續追蹤）
     # +G：跳至末尾（預設，方便往上查）
     # -R：支援 ANSI 顏色
     # -S：長行不折行（log 常有很長的一行）
     flag = '+F' if follow else '+G'
     cmd = [less, '-R', '-S', flag] + existing
 
-    # 在 less +F 模式下，Ctrl+C 中斷可能導致 terminal 停在 raw mode（無回顯）。
-    # 用 termios 事先備份 terminal 屬性，離開後無論正常或中斷都還原。
+    import signal
     import termios
+
+    # 備份 terminal 屬性，確保 less 結束後 console 狀態正常
     fd = sys.stdin.fileno() if sys.stdin.isatty() else None
     saved_tty = None
     if fd is not None:
@@ -263,11 +264,14 @@ def cmd_log(target, follow=False, error=False):
         except termios.error:
             pass
 
+    # 在 less 執行期間讓 Python 忽略 SIGINT，使 Ctrl+C 只由 less 處理。
+    # less +F 收到 SIGINT 後會停止追蹤並切回可捲動模式（而非退出），
+    # 若 Python 也攔截 SIGINT 則 less 會被終止，無法往回捲。
+    old_sigint = signal.signal(signal.SIGINT, signal.SIG_IGN)
     try:
         subprocess.run(cmd)
-    except KeyboardInterrupt:
-        pass
     finally:
+        signal.signal(signal.SIGINT, old_sigint)
         if saved_tty is not None:
             try:
                 termios.tcsetattr(fd, termios.TCSADRAIN, saved_tty)
