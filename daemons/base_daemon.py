@@ -4,6 +4,7 @@ import sys
 import time
 import signal
 import logging
+import logging.handlers
 import threading
 from pathlib import Path
 from datetime import datetime
@@ -221,7 +222,7 @@ class BaseDaemon(ABC):
         
         # 檔案 handler
         try:
-            file_handler = logging.FileHandler(self.log_file)
+            file_handler = logging.handlers.WatchedFileHandler(self.log_file)
             file_handler.setFormatter(logging.Formatter(
                 '%(asctime)s - %(name)s - %(levelname)s - %(message)s'
             ))

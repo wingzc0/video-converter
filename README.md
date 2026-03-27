@@ -340,11 +340,10 @@ python3 conv_admin.py --cleanup-stale --stale-hours 2
     delaycompress
     missingok
     notifempty
-    copytruncate
 }
 ```
 
-> `copytruncate` 可讓 daemon 不重啟也能正確輪替（直接截斷而非重新命名後建立新檔）。
+> daemon 使用 `WatchedFileHandler`，logrotate 輪替後會自動偵測 inode 變化並重新開啟新檔，不需要 `copytruncate`。
 
 ---
 
