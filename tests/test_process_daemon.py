@@ -2,6 +2,8 @@
 Unit tests for daemons/process_daemon.py
 測試時間限制、重試、過時任務清理邏輯；DB 呼叫均以 mock 取代。
 """
+import os
+import signal
 import sys
 import unittest
 from datetime import datetime, time as dtime, timedelta
@@ -188,8 +190,9 @@ class TestRetryFailedTasks(unittest.TestCase):
 class TestCleanupStaleTasks(unittest.TestCase):
     """cleanup_stale_tasks() — 標記卡住超過 STALE_HOURS 的任務為 failed"""
 
+    @patch('daemons.process_daemon.ProcessDaemon.kill_orphaned_ffmpeg', return_value=0)
     @patch('task_manager.db_manager')
-    def test_marks_stale_tasks_as_failed(self, mock_db):
+    def test_marks_stale_tasks_as_failed(self, mock_db, _kill):
         d = _make_process_daemon(STALE_HOURS='1')
         # SELECT → 2 stale tasks；每個 task 有 2 次 DB 呼叫（UPDATE + DELETE processing_lock）
         mock_db.execute_query.side_effect = [
@@ -200,14 +203,16 @@ class TestCleanupStaleTasks(unittest.TestCase):
         count = d.cleanup_stale_tasks()
         self.assertEqual(count, 2)
 
+    @patch('daemons.process_daemon.ProcessDaemon.kill_orphaned_ffmpeg', return_value=0)
     @patch('task_manager.db_manager')
-    def test_no_stale_tasks_returns_zero(self, mock_db):
+    def test_no_stale_tasks_returns_zero(self, mock_db, _kill):
         d = _make_process_daemon()
         mock_db.execute_query.return_value = []
         self.assertEqual(d.cleanup_stale_tasks(), 0)
 
+    @patch('daemons.process_daemon.ProcessDaemon.kill_orphaned_ffmpeg', return_value=0)
     @patch('task_manager.db_manager')
-    def test_stale_threshold_passed_to_query(self, mock_db):
+    def test_stale_threshold_passed_to_query(self, mock_db, _kill):
         """確認傳給 DB 的時間閾值約等於現在 - STALE_HOURS"""
         d = _make_process_daemon(STALE_HOURS='2')
         mock_db.execute_query.return_value = []
@@ -225,14 +230,94 @@ class TestCleanupStaleTasks(unittest.TestCase):
         self.assertGreater(threshold, expected_low)
         self.assertLess(threshold, expected_high)
 
+    @patch('daemons.process_daemon.ProcessDaemon.kill_orphaned_ffmpeg', return_value=0)
     @patch('task_manager.db_manager')
-    def test_db_error_returns_zero(self, mock_db):
+    def test_db_error_returns_zero(self, mock_db, _kill):
         d = _make_process_daemon()
         mock_db.execute_query.side_effect = Exception('timeout')
         self.assertEqual(d.cleanup_stale_tasks(), 0)
 
 
-class TestAcquireReleaseLock(unittest.TestCase):
+class TestKillOrphanedFfmpeg(unittest.TestCase):
+    """kill_orphaned_ffmpeg() — 清除不在 daemon 子孫樹下的孤兒 ffmpeg"""
+
+    def _make_mock_proc(self, pid, cmdline):
+        proc = MagicMock()
+        proc.pid = pid
+        proc.info = {'name': 'ffmpeg', 'cmdline': cmdline}
+        return proc
+
+    @patch('task_manager.db_manager')
+    @patch('psutil.process_iter')
+    @patch('daemons.process_daemon.ProcessDaemon._get_daemon_descendant_pids')
+    def test_kills_orphaned_ffmpeg_with_known_task(self, mock_pids, mock_iter, mock_db):
+        d = _make_process_daemon()
+        mock_pids.return_value = {os.getpid(), 9999}  # ffmpeg PID 1234 is NOT in set
+
+        orphan = self._make_mock_proc(1234, ['ffmpeg', '-i', '/videos/foo.mp4', '/output/foo.mp4'])
+        mock_iter.return_value = [orphan]
+
+        # get_task_by_input_path → task found
+        mock_db.execute_query.return_value = [{'id': 42, 'input_path': '/videos/foo.mp4'}]
+
+        with patch('os.kill') as mock_kill:
+            count = d.kill_orphaned_ffmpeg()
+
+        mock_kill.assert_called_once_with(1234, signal.SIGKILL)
+        self.assertEqual(count, 1)
+
+    @patch('task_manager.db_manager')
+    @patch('psutil.process_iter')
+    @patch('daemons.process_daemon.ProcessDaemon._get_daemon_descendant_pids')
+    def test_skips_daemon_child_ffmpeg(self, mock_pids, mock_iter, mock_db):
+        d = _make_process_daemon()
+        mock_pids.return_value = {os.getpid(), 5555}  # 5555 is daemon's child
+
+        child_ffmpeg = self._make_mock_proc(5555, ['ffmpeg', '-i', '/videos/bar.mp4', '/output/bar.mp4'])
+        mock_iter.return_value = [child_ffmpeg]
+
+        with patch('os.kill') as mock_kill:
+            count = d.kill_orphaned_ffmpeg()
+
+        mock_kill.assert_not_called()
+        self.assertEqual(count, 0)
+
+    @patch('task_manager.db_manager')
+    @patch('psutil.process_iter')
+    @patch('daemons.process_daemon.ProcessDaemon._get_daemon_descendant_pids')
+    def test_skips_orphan_with_unknown_input(self, mock_pids, mock_iter, mock_db):
+        """ffmpeg 不屬於 daemon 且 source file 不在 DB → 不 kill"""
+        d = _make_process_daemon()
+        mock_pids.return_value = {os.getpid()}
+
+        orphan = self._make_mock_proc(7777, ['ffmpeg', '-i', '/other/unknown.mp4', '/tmp/out.mp4'])
+        mock_iter.return_value = [orphan]
+
+        # 查無此 task
+        mock_db.execute_query.return_value = []
+
+        with patch('os.kill') as mock_kill:
+            count = d.kill_orphaned_ffmpeg()
+
+        mock_kill.assert_not_called()
+        self.assertEqual(count, 0)
+
+    @patch('psutil.process_iter')
+    @patch('daemons.process_daemon.ProcessDaemon._get_daemon_descendant_pids')
+    def test_skips_non_ffmpeg_processes(self, mock_pids, mock_iter):
+        d = _make_process_daemon()
+        mock_pids.return_value = {os.getpid()}
+
+        non_ffmpeg = MagicMock()
+        non_ffmpeg.pid = 8888
+        non_ffmpeg.info = {'name': 'python3', 'cmdline': ['python3', 'script.py']}
+        mock_iter.return_value = [non_ffmpeg]
+
+        with patch('os.kill') as mock_kill:
+            count = d.kill_orphaned_ffmpeg()
+
+        mock_kill.assert_not_called()
+        self.assertEqual(count, 0)
     """acquire_task_lock() / release_task_lock() — 防止重複處理"""
 
     @patch('task_manager.db_manager')
@@ -336,8 +421,9 @@ class TestUpdateTaskStatus(unittest.TestCase):
 class TestCleanupStaleTasksCoalesce(unittest.TestCase):
     """cleanup_stale_tasks() — COALESCE 確保 NULL start_time 使用 updated_at/created_at"""
 
+    @patch('daemons.process_daemon.ProcessDaemon.kill_orphaned_ffmpeg', return_value=0)
     @patch('task_manager.db_manager')
-    def test_query_uses_coalesce(self, mock_db):
+    def test_query_uses_coalesce(self, mock_db, _kill):
         """SELECT 查詢必須使用 COALESCE(start_time, updated_at, created_at)"""
         d = _make_process_daemon()
         mock_db.execute_query.return_value = []
@@ -348,8 +434,9 @@ class TestCleanupStaleTasksCoalesce(unittest.TestCase):
         self.assertIn('updated_at', select_query)
         self.assertIn('created_at', select_query)
 
+    @patch('daemons.process_daemon.ProcessDaemon.kill_orphaned_ffmpeg', return_value=0)
     @patch('task_manager.db_manager')
-    def test_marks_stale_tasks_as_failed_and_clears_lock(self, mock_db):
+    def test_marks_stale_tasks_as_failed_and_clears_lock(self, mock_db, _kill):
         """過時任務應標記為 failed 且清除 processing_lock"""
         d = _make_process_daemon()
         mock_db.execute_query.side_effect = [

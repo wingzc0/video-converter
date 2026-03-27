@@ -7,6 +7,7 @@ from task_manager import TaskRepository
 import queue
 from pathlib import Path
 import os
+import signal
 
 class ProcessDaemon(BaseDaemon):
     """
@@ -243,8 +244,74 @@ class ProcessDaemon(BaseDaemon):
         """將未超過重試上限的失敗任務重新排入 pending，每 retry_interval_cycles 個 check cycle 執行一次"""
         return self.task_repo.retry_failed_tasks(self.max_retries)
 
+    def _get_daemon_descendant_pids(self):
+        """回傳目前 process daemon 所有子孫 PID 的集合（含自身）"""
+        try:
+            import psutil
+            me = psutil.Process(os.getpid())
+            pids = {me.pid}
+            for child in me.children(recursive=True):
+                pids.add(child.pid)
+            return pids
+        except Exception:
+            return {os.getpid()}
+
+    def kill_orphaned_ffmpeg(self):
+        """
+        掃描系統中所有不在本 daemon 子孫樹下的 ffmpeg 程序，
+        若其 -i 參數指向的 source file 存在於 DB 的任務中，則 kill 之。
+        """
+        try:
+            import psutil
+        except ImportError:
+            return
+
+        daemon_pids = self._get_daemon_descendant_pids()
+        killed = 0
+
+        for proc in psutil.process_iter(['pid', 'name', 'cmdline']):
+            try:
+                if proc.info['name'] != 'ffmpeg':
+                    continue
+                if proc.pid in daemon_pids:
+                    continue
+
+                cmdline = proc.info['cmdline'] or []
+                # 從 cmdline 找 -i 後的 input_path
+                input_path = None
+                for idx, arg in enumerate(cmdline):
+                    if arg == '-i' and idx + 1 < len(cmdline):
+                        input_path = cmdline[idx + 1]
+                        break
+
+                if not input_path:
+                    continue
+
+                task = self.task_repo.get_task_by_input_path(input_path)
+                if task is None:
+                    continue
+
+                self.logger.warning(
+                    f"Killing orphaned ffmpeg PID {proc.pid} "
+                    f"(task_id={task['id']}, input={input_path})"
+                )
+                try:
+                    os.kill(proc.pid, signal.SIGKILL)
+                    killed += 1
+                except ProcessLookupError:
+                    pass  # 程序已自行結束
+
+            except (psutil.NoSuchProcess, psutil.AccessDenied):
+                continue
+
+        if killed:
+            self.logger.warning(f"Killed {killed} orphaned ffmpeg process(es)")
+        return killed
+
     def cleanup_stale_tasks(self):
-        """將卡在 processing 超過 stale_hours 的任務標記為 failed，每次 check cycle 都執行"""
+        """將卡在 processing 超過 stale_hours 的任務標記為 failed，每次 check cycle 都執行；
+        同時 kill 不在本 daemon 下且 source file 有 DB 記錄的孤兒 ffmpeg 程序。"""
+        self.kill_orphaned_ffmpeg()
         return self.task_repo.cleanup_stale_tasks(self.stale_hours)
 
     def check_and_process_tasks(self):
