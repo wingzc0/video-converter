@@ -22,6 +22,9 @@ class APIServer:
     def __init__(self, host='0.0.0.0', port=5000):
         self.host = host
         self.port = port
+        # setup_logger() 必須在 create_app() 之前呼叫，
+        # 因為 create_app() 內部會使用 self.logger
+        self.setup_logger()
         self.app = self.create_app()
         self.socketio = SocketIO(self.app, cors_allowed_origins="*", async_mode='threading')
         
@@ -43,7 +46,6 @@ class APIServer:
         self.is_running = False
         self.status_thread = None
         
-        self.setup_logger()
         self.setup_routes()
         self.setup_socketio_events()
     
