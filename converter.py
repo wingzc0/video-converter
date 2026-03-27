@@ -134,8 +134,12 @@ def convert_to_480p(input_path, output_path, progress_callback=None,
         except Exception as e:
             print(f"Conversion error: {e}")
             # 確保 ffmpeg 子程序不會成為孤兒程序繼續佔用資源；
-            # 先關閉 stderr pipe 避免 pipe buffer 滿時 wait() 死鎖
+            # 先關閉 stdout/stderr pipe 避免 pipe buffer 滿時 wait() 死鎖
             process.kill()
+            try:
+                process.stdout.close()
+            except Exception:
+                pass
             try:
                 process.stderr.close()
             except Exception:
