@@ -424,6 +424,20 @@ journalctl -u video-api       -f
 
 ---
 
+## 已知限制
+
+### 輸出路徑命名衝突
+
+輸出檔名規則為：
+- `.mp4` 輸入：`480p_{stem}.mp4`（例：`video.mp4` → `480p_video.mp4`）
+- 其他格式輸入：`480p_{stem}_{ext}.mp4`（例：`video.mpg` → `480p_video_mpg.mp4`）
+
+若目錄中同時存在如 `clip.mxf` 與 `clip_mxf.mp4`，兩者會對應到相同輸出路徑 `480p_clip_mxf.mp4`，第二個轉檔將靜默覆蓋第一個的輸出檔。資料庫僅對 `input_path` 設有唯一鍵，`output_path` 不受保護。
+
+**建議：** 避免在同一目錄放置 stem 加上副檔名後相同的混合格式檔案（如 `video.mpg` 與 `video_mpg.mp4`）。
+
+---
+
 ## 總結
 
 這是一個結構清晰、面向生產環境的批次影片處理系統。各功能模組分工明確：
