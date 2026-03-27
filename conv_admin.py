@@ -11,6 +11,8 @@ bcvnas-converter 資料庫診斷與維護工具
   python3 conv_admin.py --retry-failed
   python3 conv_admin.py --cleanup-stale [--stale-hours N]
   python3 conv_admin.py --reset-maxed-failed [--max-retries N]
+  python3 conv_admin.py --reset-task ID [ID ...]
+  python3 conv_admin.py --add-file FILE [FILE ...]
   python3 conv_admin.py --kill-stale-ffmpeg [--dry-run]
 """
 import os
@@ -19,6 +21,7 @@ import argparse
 from pathlib import Path
 
 from task_manager import TaskRepository
+from converter import get_video_info
 from dotenv import load_dotenv
 
 load_dotenv()
@@ -274,6 +277,69 @@ def cmd_kill_stale_ffmpeg(dry_run=False):
         print(f"Skipped {skipped} ffmpeg process(es) under process daemon.")
 
 # ---------------------------------------------------------------------------
+# Add specific file to conversion database
+# ---------------------------------------------------------------------------
+
+def cmd_add_file(file_paths):
+    input_dir  = Path(os.getenv('INPUT_DIRECTORY', '')).resolve()
+    output_dir = Path(os.getenv('OUTPUT_DIRECTORY', '')).resolve()
+    supported  = set(e.strip().lower() for e in
+                     os.getenv('SUPPORTED_EXTENSIONS',
+                               '.mp4,.mkv,.avi,.mov,.mts,.mxf,.mpg').split(','))
+
+    task_repo = TaskRepository()
+    added = 0
+    skipped = 0
+
+    for raw_path in file_paths:
+        file_path = Path(raw_path).resolve()
+
+        if not file_path.exists():
+            print(f"  ❌ File not found: {file_path}")
+            skipped += 1
+            continue
+
+        if not file_path.is_file():
+            print(f"  ❌ Not a file: {file_path}")
+            skipped += 1
+            continue
+
+        if file_path.suffix.lower() not in supported:
+            print(f"  ❌ Unsupported extension '{file_path.suffix}': {file_path.name}")
+            skipped += 1
+            continue
+
+        # Compute output path the same way scan_daemon does
+        try:
+            relative = file_path.relative_to(input_dir)
+            out_path = output_dir / relative.parent / f"480p_{file_path.stem}.mp4"
+        except ValueError:
+            # File is outside INPUT_DIRECTORY — place output alongside input file
+            out_path = file_path.parent / f"480p_{file_path.stem}.mp4"
+
+        # Probe resolution via ffprobe
+        video_info = get_video_info(str(file_path))
+        if not video_info:
+            print(f"  ❌ Cannot probe video info: {file_path.name}")
+            skipped += 1
+            continue
+
+        rows = task_repo.insert_task(str(file_path), str(out_path), video_info['resolution'])
+        if rows > 0:
+            print(f"  ✅ Added  [{video_info['resolution']}] {file_path.name}")
+            print(f"           → {out_path}")
+            added += 1
+        else:
+            # INSERT IGNORE silently skipped — already exists
+            existing = task_repo.get_task_by_input_path(str(file_path))
+            status = existing.get('status', '?') if existing else '?'
+            print(f"  ⚠ Already in DB (status={status}): {file_path.name}")
+            skipped += 1
+
+    print(f"\nDone. Added {added}, skipped {skipped}.")
+
+
+# ---------------------------------------------------------------------------
 # Argument parser & entry point
 # ---------------------------------------------------------------------------
 
@@ -290,6 +356,8 @@ def parse_arguments():
   python3 conv_admin.py --reset-maxed-failed
   python3 conv_admin.py --reset-maxed-failed --max-retries 5
   python3 conv_admin.py --reset-task 123 456 789
+  python3 conv_admin.py --add-file /BCVNAS/path/to/video.mp4
+  python3 conv_admin.py --add-file /BCVNAS/a.mp4 /BCVNAS/b.mkv
   python3 conv_admin.py --kill-stale-ffmpeg --dry-run
   python3 conv_admin.py --kill-stale-ffmpeg
 """
@@ -303,6 +371,8 @@ def parse_arguments():
     action.add_argument('--reset-maxed-failed',  action='store_true', help='重設已達重試上限的失敗任務為 pending（retry_count 歸零）')
     action.add_argument('--reset-task',          nargs='+', type=int, metavar='ID',
                         help='重設指定 task ID 為 pending（retry_count 歸零）')
+    action.add_argument('--add-file',            nargs='+', metavar='FILE',
+                        help='手動新增指定影片檔至轉檔資料庫')
     action.add_argument('--kill-stale-ffmpeg',   action='store_true', help='Kill 不在 process daemon 下且 source file 有 DB 記錄的孤兒 ffmpeg 程序')
 
     parser.add_argument('--stale-hours', type=float, default=24,
@@ -329,6 +399,8 @@ def main():
         cmd_reset_maxed_failed(args.max_retries)
     elif args.reset_task:
         cmd_reset_task(args.reset_task)
+    elif args.add_file:
+        cmd_add_file(args.add_file)
     elif args.kill_stale_ffmpeg:
         cmd_kill_stale_ffmpeg(dry_run=args.dry_run)
 

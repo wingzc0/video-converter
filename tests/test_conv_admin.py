@@ -280,5 +280,111 @@ class TestCmdResetTask(unittest.TestCase):
         self.assertIn('10', str(update_calls[0]))
 
 
+class TestCmdAddFile(unittest.TestCase):
+    """cmd_add_file() — 手動新增影片檔至轉檔資料庫"""
+
+    def setUp(self):
+        import tempfile
+        self.tmp = Path(tempfile.mkdtemp())
+        self.video = self.tmp / 'test.mp4'
+        self.video.touch()
+
+    def tearDown(self):
+        import shutil
+        shutil.rmtree(self.tmp, ignore_errors=True)
+
+    @patch('task_manager.db_manager')
+    @patch('conv_admin.get_video_info')
+    def test_adds_new_file(self, mock_info, mock_db):
+        """有效影片檔應成功插入 DB"""
+        mock_info.return_value = {'resolution': '1920x1080', 'width': 1920, 'height': 1080}
+        mock_db.execute_query.return_value = 1  # INSERT → 1 row affected
+        with patch('builtins.print'), \
+             patch.dict('os.environ', {'INPUT_DIRECTORY': str(self.tmp),
+                                       'OUTPUT_DIRECTORY': str(self.tmp / 'out')}):
+            from conv_admin import cmd_add_file
+            cmd_add_file([str(self.video)])
+        insert_calls = [c for c in mock_db.execute_query.call_args_list
+                        if 'INSERT' in str(c)]
+        self.assertEqual(len(insert_calls), 1)
+        # output path should be .mp4
+        self.assertIn('480p_test.mp4', str(insert_calls[0]))
+
+    @patch('task_manager.db_manager')
+    @patch('conv_admin.get_video_info')
+    def test_already_exists_in_db(self, mock_info, mock_db):
+        """已在 DB 中的檔案應跳過（INSERT IGNORE → 0 rows）"""
+        mock_info.return_value = {'resolution': '1920x1080', 'width': 1920, 'height': 1080}
+        mock_db.execute_query.side_effect = [
+            0,  # INSERT IGNORE → 0 (already exists)
+            [{'id': 5, 'status': 'pending', 'output_path': '/out/480p_test.mp4'}],  # get_task_by_input_path
+        ]
+        with patch('builtins.print'), \
+             patch.dict('os.environ', {'INPUT_DIRECTORY': str(self.tmp),
+                                       'OUTPUT_DIRECTORY': str(self.tmp / 'out')}):
+            from conv_admin import cmd_add_file
+            cmd_add_file([str(self.video)])
+        insert_calls = [c for c in mock_db.execute_query.call_args_list
+                        if 'INSERT' in str(c)]
+        self.assertEqual(len(insert_calls), 1)
+
+    def test_file_not_found(self):
+        """不存在的檔案應被跳過"""
+        with patch('builtins.print'), \
+             patch.dict('os.environ', {'INPUT_DIRECTORY': str(self.tmp),
+                                       'OUTPUT_DIRECTORY': str(self.tmp / 'out')}):
+            from conv_admin import cmd_add_file
+            cmd_add_file(['/nonexistent/video.mp4'])
+        # No exception → test passes
+
+    def test_unsupported_extension(self):
+        """不支援的副檔名應被跳過"""
+        doc = self.tmp / 'report.pdf'
+        doc.touch()
+        with patch('builtins.print'), \
+             patch.dict('os.environ', {'INPUT_DIRECTORY': str(self.tmp),
+                                       'OUTPUT_DIRECTORY': str(self.tmp / 'out')}):
+            from conv_admin import cmd_add_file
+            cmd_add_file([str(doc)])
+        # No DB call expected
+
+    @patch('task_manager.db_manager')
+    @patch('conv_admin.get_video_info')
+    def test_ffprobe_failure_skipped(self, mock_info, mock_db):
+        """ffprobe 失敗時應跳過該檔案"""
+        mock_info.return_value = None
+        with patch('builtins.print'), \
+             patch.dict('os.environ', {'INPUT_DIRECTORY': str(self.tmp),
+                                       'OUTPUT_DIRECTORY': str(self.tmp / 'out')}):
+            from conv_admin import cmd_add_file
+            cmd_add_file([str(self.video)])
+        mock_db.execute_query.assert_not_called()
+
+    @patch('task_manager.db_manager')
+    @patch('conv_admin.get_video_info')
+    def test_file_outside_input_dir_uses_local_output(self, mock_info, mock_db):
+        """INPUT_DIRECTORY 外的檔案，output 應放在同目錄"""
+        import tempfile
+        other_dir = Path(tempfile.mkdtemp())
+        try:
+            other_file = other_dir / 'external.mp4'
+            other_file.touch()
+            mock_info.return_value = {'resolution': '1280x720', 'width': 1280, 'height': 720}
+            mock_db.execute_query.return_value = 1
+            with patch('builtins.print'), \
+                 patch.dict('os.environ', {'INPUT_DIRECTORY': str(self.tmp),
+                                           'OUTPUT_DIRECTORY': str(self.tmp / 'out')}):
+                from conv_admin import cmd_add_file
+                cmd_add_file([str(other_file)])
+            insert_calls = [c for c in mock_db.execute_query.call_args_list
+                            if 'INSERT' in str(c)]
+            self.assertEqual(len(insert_calls), 1)
+            # output should be in same dir as input (not in OUTPUT_DIRECTORY)
+            self.assertIn(str(other_dir), str(insert_calls[0]))
+        finally:
+            import shutil
+            shutil.rmtree(other_dir, ignore_errors=True)
+
+
 if __name__ == '__main__':
     unittest.main()
