@@ -257,8 +257,8 @@ class TestKillOrphanedFfmpeg(unittest.TestCase):
         orphan = self._make_mock_proc(1234, ['ffmpeg', '-i', '/videos/foo.mp4', '/output/foo.mp4'])
         mock_iter.return_value = [orphan]
 
-        # get_task_by_input_path → task found
-        mock_db.execute_query.return_value = [{'id': 42, 'input_path': '/videos/foo.mp4'}]
+        # get_task_by_input_path → task found with active status
+        mock_db.execute_query.return_value = [{'id': 42, 'status': 'processing', 'output_path': '/output/foo.mp4'}]
 
         with patch('os.kill') as mock_kill:
             count = d.kill_orphaned_ffmpeg()
@@ -318,6 +318,43 @@ class TestKillOrphanedFfmpeg(unittest.TestCase):
 
         mock_kill.assert_not_called()
         self.assertEqual(count, 0)
+
+    @patch('task_manager.db_manager')
+    @patch('psutil.process_iter')
+    @patch('daemons.process_daemon.ProcessDaemon._get_daemon_descendant_pids')
+    def test_skips_ffmpeg_with_completed_task(self, mock_pids, mock_iter, mock_db):
+        """source file 在 DB 中但 status='completed' → 不 kill（避免誤殺手動執行的 ffmpeg）"""
+        d = _make_process_daemon()
+        mock_pids.return_value = {os.getpid()}
+
+        orphan = self._make_mock_proc(2222, ['ffmpeg', '-i', '/videos/done.mp4', '/tmp/out.mp4'])
+        mock_iter.return_value = [orphan]
+        mock_db.execute_query.return_value = [{'id': 10, 'status': 'completed', 'output_path': '/out/done.mp4'}]
+
+        with patch('os.kill') as mock_kill:
+            count = d.kill_orphaned_ffmpeg()
+
+        mock_kill.assert_not_called()
+        self.assertEqual(count, 0)
+
+    @patch('task_manager.db_manager')
+    @patch('psutil.process_iter')
+    @patch('daemons.process_daemon.ProcessDaemon._get_daemon_descendant_pids')
+    def test_skips_ffmpeg_with_failed_task(self, mock_pids, mock_iter, mock_db):
+        """source file 在 DB 中但 status='failed' → 不 kill"""
+        d = _make_process_daemon()
+        mock_pids.return_value = {os.getpid()}
+
+        orphan = self._make_mock_proc(3333, ['ffmpeg', '-i', '/videos/err.mp4', '/tmp/out.mp4'])
+        mock_iter.return_value = [orphan]
+        mock_db.execute_query.return_value = [{'id': 11, 'status': 'failed', 'output_path': '/out/err.mp4'}]
+
+        with patch('os.kill') as mock_kill:
+            count = d.kill_orphaned_ffmpeg()
+
+        mock_kill.assert_not_called()
+        self.assertEqual(count, 0)
+
     """acquire_task_lock() / release_task_lock() — 防止重複處理"""
 
     @patch('task_manager.db_manager')

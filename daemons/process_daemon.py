@@ -291,9 +291,14 @@ class ProcessDaemon(BaseDaemon):
                 if task is None:
                     continue
 
+                # Only kill if the task is in an active state; skip completed/failed
+                # to avoid killing unrelated ffmpeg processes using the same source file.
+                if task.get('status') not in ('pending', 'processing'):
+                    continue
+
                 self.logger.warning(
                     f"Killing orphaned ffmpeg PID {proc.pid} "
-                    f"(task_id={task['id']}, input={input_path})"
+                    f"(task_id={task['id']}, status={task.get('status')}, input={input_path})"
                 )
                 try:
                     os.kill(proc.pid, signal.SIGKILL)

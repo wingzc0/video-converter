@@ -194,6 +194,38 @@ class TestCmdKillStaleFfmpeg(unittest.TestCase):
 
         mock_kill.assert_not_called()
 
+    @patch('task_manager.db_manager')
+    @patch('psutil.process_iter')
+    @patch('conv_admin._get_process_daemon_descendant_pids', return_value=set())
+    def test_skips_completed_task_ffmpeg(self, _pids, mock_iter, mock_db):
+        """source file 在 DB 中但 status='completed' → 不 kill"""
+        import os, signal
+        orphan = self._make_proc(2222, ['ffmpeg', '-i', '/input/done.mp4', '/tmp/out.mp4'])
+        mock_iter.return_value = [orphan]
+        mock_db.execute_query.return_value = [{'id': 10, 'status': 'completed', 'output_path': '/out/done.mp4'}]
+
+        with patch('os.kill') as mock_kill, patch('builtins.print'):
+            from conv_admin import cmd_kill_stale_ffmpeg
+            cmd_kill_stale_ffmpeg(dry_run=False)
+
+        mock_kill.assert_not_called()
+
+    @patch('task_manager.db_manager')
+    @patch('psutil.process_iter')
+    @patch('conv_admin._get_process_daemon_descendant_pids', return_value=set())
+    def test_skips_failed_task_ffmpeg(self, _pids, mock_iter, mock_db):
+        """source file 在 DB 中但 status='failed' → 不 kill"""
+        import os, signal
+        orphan = self._make_proc(3333, ['ffmpeg', '-i', '/input/err.mp4', '/tmp/out.mp4'])
+        mock_iter.return_value = [orphan]
+        mock_db.execute_query.return_value = [{'id': 11, 'status': 'failed', 'output_path': '/out/err.mp4'}]
+
+        with patch('os.kill') as mock_kill, patch('builtins.print'):
+            from conv_admin import cmd_kill_stale_ffmpeg
+            cmd_kill_stale_ffmpeg(dry_run=False)
+
+        mock_kill.assert_not_called()
+
 
 if __name__ == '__main__':
     unittest.main()

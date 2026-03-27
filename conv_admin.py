@@ -223,6 +223,11 @@ def cmd_kill_stale_ffmpeg(dry_run=False):
             if task is None:
                 continue
 
+            # Only kill if the task is in an active state; skip completed/failed
+            # to avoid killing unrelated ffmpeg processes using the same source file.
+            if task.get('status') not in ('pending', 'processing'):
+                continue
+
             print(f"  {'[DRY-RUN] ' if dry_run else ''}Kill ffmpeg PID {proc.pid} "
                   f"(task_id={task['id']}, status={task.get('status','?')}, "
                   f"input={input_path})")
