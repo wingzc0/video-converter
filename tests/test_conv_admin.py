@@ -110,5 +110,90 @@ class TestCmdCleanupStale(unittest.TestCase):
         self.assertIn('failed', update_query.lower())
 
 
+class TestCmdKillStaleFfmpeg(unittest.TestCase):
+    """cmd_kill_stale_ffmpeg() — 掃描並 kill 孤兒 ffmpeg 程序"""
+
+    def _make_proc(self, pid, cmdline):
+        proc = MagicMock()
+        proc.pid = pid
+        proc.info = {'name': 'ffmpeg', 'cmdline': cmdline}
+        return proc
+
+    @patch('task_manager.db_manager')
+    @patch('psutil.process_iter')
+    @patch('conv_admin._get_process_daemon_descendant_pids', return_value=set())
+    def test_kills_orphan_with_known_task(self, _pids, mock_iter, mock_db):
+        """孤兒 ffmpeg 且 source file 有 DB 記錄時應被 kill"""
+        import os, signal
+        orphan = self._make_proc(1234, ['ffmpeg', '-i', '/input/a.mp4', '/output/a.mp4'])
+        mock_iter.return_value = [orphan]
+        mock_db.execute_query.return_value = [{'id': 1, 'input_path': '/input/a.mp4', 'status': 'processing'}]
+
+        with patch('os.kill') as mock_kill, patch('builtins.print'):
+            from conv_admin import cmd_kill_stale_ffmpeg
+            cmd_kill_stale_ffmpeg(dry_run=False)
+
+        mock_kill.assert_called_once_with(1234, signal.SIGKILL)
+
+    @patch('task_manager.db_manager')
+    @patch('psutil.process_iter')
+    @patch('conv_admin._get_process_daemon_descendant_pids', return_value=set())
+    def test_dry_run_does_not_kill(self, _pids, mock_iter, mock_db):
+        """dry_run=True 時只列印，不呼叫 os.kill"""
+        orphan = self._make_proc(5678, ['ffmpeg', '-i', '/input/b.mp4', '/output/b.mp4'])
+        mock_iter.return_value = [orphan]
+        mock_db.execute_query.return_value = [{'id': 2, 'input_path': '/input/b.mp4', 'status': 'processing'}]
+
+        with patch('os.kill') as mock_kill, patch('builtins.print'):
+            from conv_admin import cmd_kill_stale_ffmpeg
+            cmd_kill_stale_ffmpeg(dry_run=True)
+
+        mock_kill.assert_not_called()
+
+    @patch('task_manager.db_manager')
+    @patch('psutil.process_iter')
+    @patch('conv_admin._get_process_daemon_descendant_pids', return_value={9999})
+    def test_skips_daemon_child(self, _pids, mock_iter, mock_db):
+        """daemon 子程序不應被 kill"""
+        child = self._make_proc(9999, ['ffmpeg', '-i', '/input/c.mp4', '/output/c.mp4'])
+        mock_iter.return_value = [child]
+
+        with patch('os.kill') as mock_kill, patch('builtins.print'):
+            from conv_admin import cmd_kill_stale_ffmpeg
+            cmd_kill_stale_ffmpeg(dry_run=False)
+
+        mock_kill.assert_not_called()
+
+    @patch('task_manager.db_manager')
+    @patch('psutil.process_iter')
+    @patch('conv_admin._get_process_daemon_descendant_pids', return_value=set())
+    def test_skips_unknown_input_path(self, _pids, mock_iter, mock_db):
+        """ffmpeg 的 source file 不在 DB 時不應被 kill"""
+        orphan = self._make_proc(7777, ['ffmpeg', '-i', '/other/unknown.mp4', '/tmp/out.mp4'])
+        mock_iter.return_value = [orphan]
+        mock_db.execute_query.return_value = []  # 查無此 task
+
+        with patch('os.kill') as mock_kill, patch('builtins.print'):
+            from conv_admin import cmd_kill_stale_ffmpeg
+            cmd_kill_stale_ffmpeg(dry_run=False)
+
+        mock_kill.assert_not_called()
+
+    @patch('psutil.process_iter')
+    @patch('conv_admin._get_process_daemon_descendant_pids', return_value=set())
+    def test_skips_non_ffmpeg_process(self, _pids, mock_iter):
+        """非 ffmpeg 程序不應被處理"""
+        proc = MagicMock()
+        proc.pid = 8888
+        proc.info = {'name': 'python3', 'cmdline': ['python3', 'script.py']}
+        mock_iter.return_value = [proc]
+
+        with patch('os.kill') as mock_kill, patch('builtins.print'):
+            from conv_admin import cmd_kill_stale_ffmpeg
+            cmd_kill_stale_ffmpeg(dry_run=False)
+
+        mock_kill.assert_not_called()
+
+
 if __name__ == '__main__':
     unittest.main()
