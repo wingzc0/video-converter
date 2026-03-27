@@ -137,6 +137,19 @@ class TaskRepository:
             self._logger.error(f"Error querying maxed failed tasks: {str(e)}")
             return []
 
+    def get_recent_failed_tasks(self, limit=5):
+        """回傳最近失敗任務清單"""
+        try:
+            return db_manager.execute_query(
+                """SELECT id, input_path, error_message, retry_count, updated_at
+                   FROM conversion_tasks WHERE status='failed'
+                   ORDER BY updated_at DESC LIMIT %s""",
+                (limit,), fetch=True
+            )
+        except Exception as e:
+            self._logger.error(f"Error getting recent failed tasks: {str(e)}")
+            return []
+
     # ------------------------------------------------------------------
     # Write operations — task status
     # ------------------------------------------------------------------
