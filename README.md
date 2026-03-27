@@ -25,7 +25,7 @@
 ```
 video-converter/
 │
-├── conv_admin.py              # 資料庫診斷與維護工具：目錄預覽、任務統計、手動重試/清理/kill 孤兒 ffmpeg
+├── conv_admin.py              # 資料庫診斷與維護工具：目錄預覽、任務統計、手動重試/清理/重設/新增/kill 孤兒 ffmpeg
 │
 ├── converter.py               # 核心 FFmpeg 封裝模組
 │                              #   get_video_info()     – 用 ffprobe 取得解析度與元數據
@@ -45,7 +45,8 @@ video-converter/
 │
 ├── task_manager.py            # 任務資料庫操作的統一抽象層
 │                              #   TaskRepository 類別：封裝所有 conversion_tasks DB 操作
-│                              #   get_pending_tasks()、get_task_by_input_path()、get_task_statistics()
+│                              #   get_pending_tasks()、get_task_by_input_path()、get_task_by_id()
+│                              #   get_task_detail()、get_task_statistics()
 │                              #   get_recent_failed_tasks()、get_maxed_failed_tasks()
 │                              #   update_task_status()、acquire/release_task_lock()
 │                              #   retry_failed_tasks()、cleanup_stale_tasks()
@@ -63,6 +64,7 @@ video-converter/
 │   │
 │   ├── scan_daemon.py         # 掃描 Daemon（繼承 BaseDaemon）
 │   │                          #   遞迴遍歷 INPUT_DIRECTORY
+│   │                          #   遞迴遍歷 INPUT_DIRECTORY，輸出路徑一律使用 .mp4 副檔名
 │   │                          #   掃描順序（NFS I/O 最小化）：
 │   │                          #     1. DB 查詢 → pending/processing/failed 直接略過
 │   │                          #     2. completed → 用 DB 儲存的 output_path 做 exist 檢查（無 ffprobe）
@@ -316,6 +318,8 @@ python monitor_daemons.py -c
 | `--stale-hours N` | 過時閾值（小時，預設 24，搭配 --cleanup-stale 使用） |
 | `--kill-stale-ffmpeg` | Kill 不在 process daemon 子孫樹下且 source file 有 DB 記錄的孤兒 ffmpeg 程序 |
 | `--dry-run` | 僅列出會被 kill 的程序，不實際執行（搭配 --kill-stale-ffmpeg 使用） |
+| `--reset-task ID [ID ...]` | 將指定任務重設為 pending（retry_count 歸零、清除錯誤訊息） |
+| `--add-file FILE [FILE ...]` | 手動將指定影片檔加入轉檔佇列（跳過掃描 daemon） |
 
 ## 使用範例
 
@@ -340,6 +344,14 @@ python3 conv_admin.py --kill-stale-ffmpeg --dry-run
 
 # Kill 孤兒 ffmpeg（不在 process daemon 下且 source file 有 DB 記錄）
 python3 conv_admin.py --kill-stale-ffmpeg
+
+# 重設特定任務為 pending（適用於手動修正特定失敗任務）
+python3 conv_admin.py --reset-task 42
+python3 conv_admin.py --reset-task 42 43 44
+
+# 手動將影片檔加入佇列（適用於 scan daemon 尚未掃描到的檔案）
+python3 conv_admin.py --add-file /path/to/video.mp4
+python3 conv_admin.py --add-file /path/to/video1.mp4 /path/to/video2.mkv
 ```
 
 ---
