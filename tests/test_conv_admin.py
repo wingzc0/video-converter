@@ -14,7 +14,7 @@ class TestCmdResetMaxedFailed(unittest.TestCase):
     """cmd_reset_maxed_failed() — 列出並重置超過最大重試次數的失敗任務"""
 
     def _run(self, tasks, confirmed='y', max_retries=3):
-        with patch('conv_admin.db_manager') as mock_db, \
+        with patch('task_manager.db_manager') as mock_db, \
              patch('builtins.input', return_value=confirmed), \
              patch('builtins.print'):
             mock_db.execute_query.return_value = tasks
@@ -48,7 +48,7 @@ class TestCmdResetMaxedFailed(unittest.TestCase):
 
     def test_select_uses_correct_threshold(self):
         """SELECT 查詢應使用 max_retries 作為 retry_count 閾值"""
-        with patch('conv_admin.db_manager') as mock_db, \
+        with patch('task_manager.db_manager') as mock_db, \
              patch('builtins.input', return_value='n'), \
              patch('builtins.print'):
             mock_db.execute_query.return_value = [
@@ -75,7 +75,7 @@ class TestCmdCleanupStale(unittest.TestCase):
     """cmd_cleanup_stale() — 清除長時間卡在 processing 的任務，使用 COALESCE"""
 
     def _run(self, tasks, hours=24):
-        with patch('conv_admin.db_manager') as mock_db, \
+        with patch('task_manager.db_manager') as mock_db, \
              patch('builtins.print'):
             mock_db.execute_query.return_value = tasks
             from conv_admin import cmd_cleanup_stale
@@ -89,7 +89,7 @@ class TestCmdCleanupStale(unittest.TestCase):
 
     def test_select_uses_coalesce(self):
         """SELECT 查詢應使用 COALESCE(start_time, updated_at, created_at)"""
-        with patch('conv_admin.db_manager') as mock_db, \
+        with patch('task_manager.db_manager') as mock_db, \
              patch('builtins.print'):
             mock_db.execute_query.return_value = []
             from conv_admin import cmd_cleanup_stale

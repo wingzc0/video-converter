@@ -15,9 +15,8 @@ bcvnas-converter 資料庫診斷與維護工具
 import os
 import argparse
 from pathlib import Path
-from datetime import datetime, timedelta
 
-from db_manager import db_manager
+from task_manager import TaskRepository
 from dotenv import load_dotenv
 
 load_dotenv()
@@ -94,23 +93,11 @@ def cmd_show_dirs():
 # ---------------------------------------------------------------------------
 
 def cmd_stats():
-    query = """
-    SELECT
-        COUNT(*) AS total,
-        SUM(status = 'pending')    AS pending,
-        SUM(status = 'processing') AS processing,
-        SUM(status = 'completed')  AS completed,
-        SUM(status = 'failed')     AS failed,
-        SUM(retry_count > 0)       AS retried,
-        AVG(CASE WHEN status IN ('completed','failed')
-            THEN TIMESTAMPDIFF(SECOND, start_time, end_time) END) AS avg_sec
-    FROM conversion_tasks
-    """
-    rows = db_manager.execute_query(query, fetch=True)
-    if not rows:
+    task_repo = TaskRepository()
+    s = task_repo.get_task_statistics()
+    if not s:
         print("No data in conversion_tasks.")
         return
-    s = rows[0]
     print("=== Task Statistics ===")
     print(f"  Total      : {s['total']}")
     print(f"  Pending    : {s['pending']}")
@@ -123,12 +110,7 @@ def cmd_stats():
 
     if s['failed'] and int(s['failed']) > 0:
         print("\n  Recent failed tasks (up to 5):")
-        q2 = """
-        SELECT id, input_path, error_message, retry_count, updated_at
-        FROM conversion_tasks WHERE status='failed'
-        ORDER BY updated_at DESC LIMIT 5
-        """
-        for t in db_manager.execute_query(q2, fetch=True):
+        for t in task_repo.get_recent_failed_tasks(5):
             print(f"    [{t['id']}] {Path(t['input_path']).name}")
             print(f"          error={t['error_message']}  retries={t['retry_count']}  at={t['updated_at']}")
 
@@ -137,32 +119,16 @@ def cmd_stats():
 # ---------------------------------------------------------------------------
 
 def cmd_retry_failed(max_retries=3):
-    query = """
-    SELECT id, retry_count FROM conversion_tasks
-    WHERE status='failed' AND retry_count < %s
-    """
-    tasks = db_manager.execute_query(query, (max_retries,), fetch=True)
-    if not tasks:
+    task_repo = TaskRepository()
+    count = task_repo.retry_failed_tasks(max_retries=max_retries)
+    if count == 0:
         print("No failed tasks eligible for retry.")
-        return
-    for t in tasks:
-        db_manager.execute_query(
-            """UPDATE conversion_tasks
-               SET status='pending', is_processing=FALSE,
-                   error_message=CONCAT('Retry #',%s,': ',COALESCE(error_message,''))
-               WHERE id=%s""",
-            (t['retry_count'], t['id'])
-        )
-    print(f"Retried {len(tasks)} task(s) (max_retries={max_retries}).")
+    else:
+        print(f"Retried {count} task(s) (max_retries={max_retries}).")
 
 def cmd_reset_maxed_failed(max_retries=3):
-    tasks = db_manager.execute_query(
-        """SELECT id, input_path, retry_count, error_message
-           FROM conversion_tasks
-           WHERE status='failed' AND retry_count >= %s
-           ORDER BY updated_at DESC""",
-        (max_retries,), fetch=True
-    )
+    task_repo = TaskRepository()
+    tasks = task_repo.get_maxed_failed_tasks(max_retries)
     if not tasks:
         print(f"No failed tasks with retry_count >= {max_retries}.")
         return
@@ -173,42 +139,17 @@ def cmd_reset_maxed_failed(max_retries=3):
     if confirm != 'y':
         print("Aborted.")
         return
-    ids = [t['id'] for t in tasks]
-    placeholders = ','.join(['%s'] * len(ids))
-    db_manager.execute_query(
-        f"""UPDATE conversion_tasks
-            SET status='pending', is_processing=FALSE,
-                retry_count=0,
-                error_message=CONCAT('Reset from maxed-failed: ', COALESCE(error_message,''))
-            WHERE id IN ({placeholders})""",
-        tuple(ids)
-    )
+    task_repo.reset_tasks_to_pending([t['id'] for t in tasks])
     print(f"Reset {len(tasks)} task(s) to pending.")
 
 
 def cmd_cleanup_stale(hours=24):
-    stale_time = (datetime.now() - timedelta(hours=hours)).strftime('%Y-%m-%d %H:%M:%S')
-    tasks = db_manager.execute_query(
-        """SELECT id FROM conversion_tasks
-           WHERE status='processing' AND is_processing=TRUE
-           AND COALESCE(start_time, updated_at, created_at) < %s""",
-        (stale_time,), fetch=True
-    )
-    if not tasks:
+    task_repo = TaskRepository()
+    count = task_repo.cleanup_stale_tasks(stale_hours=hours)
+    if count == 0:
         print(f"No stale tasks (>{hours}h in processing).")
-        return
-    for t in tasks:
-        db_manager.execute_query(
-            """UPDATE conversion_tasks
-               SET status='failed', is_processing=FALSE,
-                   error_message=%s, end_time=CURRENT_TIMESTAMP
-               WHERE id=%s""",
-            (f"Stale after {hours}h (manual cleanup)", t['id'])
-        )
-        db_manager.execute_query(
-            "DELETE FROM processing_lock WHERE task_id=%s", (t['id'],)
-        )
-    print(f"Cleaned up {len(tasks)} stale task(s) (>{hours}h in processing).")
+    else:
+        print(f"Cleaned up {count} stale task(s) (>{hours}h in processing).")
 
 # ---------------------------------------------------------------------------
 # Argument parser & entry point

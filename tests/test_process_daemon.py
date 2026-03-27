@@ -162,7 +162,7 @@ class TestGetTimeUntilAllowed(unittest.TestCase):
 class TestRetryFailedTasks(unittest.TestCase):
     """retry_failed_tasks() — 重置失敗任務回 pending"""
 
-    @patch('daemons.process_daemon.db_manager')
+    @patch('task_manager.db_manager')
     def test_retries_tasks_below_max(self, mock_db):
         d = _make_process_daemon(MAX_RETRIES='3')
         mock_db.execute_query.side_effect = [
@@ -172,13 +172,13 @@ class TestRetryFailedTasks(unittest.TestCase):
         count = d.retry_failed_tasks()
         self.assertEqual(count, 2)
 
-    @patch('daemons.process_daemon.db_manager')
+    @patch('task_manager.db_manager')
     def test_no_tasks_returns_zero(self, mock_db):
         d = _make_process_daemon()
         mock_db.execute_query.return_value = []
         self.assertEqual(d.retry_failed_tasks(), 0)
 
-    @patch('daemons.process_daemon.db_manager')
+    @patch('task_manager.db_manager')
     def test_db_error_returns_zero(self, mock_db):
         d = _make_process_daemon()
         mock_db.execute_query.side_effect = Exception('DB error')
@@ -188,7 +188,7 @@ class TestRetryFailedTasks(unittest.TestCase):
 class TestCleanupStaleTasks(unittest.TestCase):
     """cleanup_stale_tasks() — 標記卡住超過 STALE_HOURS 的任務為 failed"""
 
-    @patch('daemons.process_daemon.db_manager')
+    @patch('task_manager.db_manager')
     def test_marks_stale_tasks_as_failed(self, mock_db):
         d = _make_process_daemon(STALE_HOURS='1')
         # SELECT → 2 stale tasks；每個 task 有 2 次 DB 呼叫（UPDATE + DELETE processing_lock）
@@ -200,13 +200,13 @@ class TestCleanupStaleTasks(unittest.TestCase):
         count = d.cleanup_stale_tasks()
         self.assertEqual(count, 2)
 
-    @patch('daemons.process_daemon.db_manager')
+    @patch('task_manager.db_manager')
     def test_no_stale_tasks_returns_zero(self, mock_db):
         d = _make_process_daemon()
         mock_db.execute_query.return_value = []
         self.assertEqual(d.cleanup_stale_tasks(), 0)
 
-    @patch('daemons.process_daemon.db_manager')
+    @patch('task_manager.db_manager')
     def test_stale_threshold_passed_to_query(self, mock_db):
         """確認傳給 DB 的時間閾值約等於現在 - STALE_HOURS"""
         d = _make_process_daemon(STALE_HOURS='2')
@@ -225,7 +225,7 @@ class TestCleanupStaleTasks(unittest.TestCase):
         self.assertGreater(threshold, expected_low)
         self.assertLess(threshold, expected_high)
 
-    @patch('daemons.process_daemon.db_manager')
+    @patch('task_manager.db_manager')
     def test_db_error_returns_zero(self, mock_db):
         d = _make_process_daemon()
         mock_db.execute_query.side_effect = Exception('timeout')
@@ -235,19 +235,19 @@ class TestCleanupStaleTasks(unittest.TestCase):
 class TestAcquireReleaseLock(unittest.TestCase):
     """acquire_task_lock() / release_task_lock() — 防止重複處理"""
 
-    @patch('daemons.process_daemon.db_manager')
+    @patch('task_manager.db_manager')
     def test_acquire_success(self, mock_db):
         d = _make_process_daemon()
         mock_db.execute_query.return_value = 1  # 1 row updated
         self.assertTrue(d.acquire_task_lock(task_id=5, worker_id='worker_0'))
 
-    @patch('daemons.process_daemon.db_manager')
+    @patch('task_manager.db_manager')
     def test_acquire_fail_already_locked(self, mock_db):
         d = _make_process_daemon()
         mock_db.execute_query.return_value = 0  # 0 rows updated = already locked
         self.assertFalse(d.acquire_task_lock(task_id=5, worker_id='worker_0'))
 
-    @patch('daemons.process_daemon.db_manager')
+    @patch('task_manager.db_manager')
     def test_release_lock(self, mock_db):
         d = _make_process_daemon()
         mock_db.execute_query.return_value = 1
@@ -263,7 +263,7 @@ class TestAcquireReleaseLock(unittest.TestCase):
 class TestUpdateTaskStatus(unittest.TestCase):
     """update_task_status() — retry_count 遞增、is_processing 原子清除"""
 
-    @patch('daemons.process_daemon.db_manager')
+    @patch('task_manager.db_manager')
     def test_failed_increments_retry_count(self, mock_db):
         """status='failed' 時，SQL 必須含 retry_count = COALESCE(retry_count, 0) + 1"""
         d = _make_process_daemon()
@@ -272,7 +272,7 @@ class TestUpdateTaskStatus(unittest.TestCase):
         self.assertIn('retry_count', query)
         self.assertIn('+ 1', query)
 
-    @patch('daemons.process_daemon.db_manager')
+    @patch('task_manager.db_manager')
     def test_failed_clears_is_processing(self, mock_db):
         """status='failed' 時，SQL 必須含 is_processing = FALSE"""
         d = _make_process_daemon()
@@ -281,7 +281,7 @@ class TestUpdateTaskStatus(unittest.TestCase):
         self.assertIn('is_processing', query)
         self.assertIn('FALSE', query.upper())
 
-    @patch('daemons.process_daemon.db_manager')
+    @patch('task_manager.db_manager')
     def test_completed_clears_is_processing(self, mock_db):
         """status='completed' 時，SQL 必須含 is_processing = FALSE"""
         d = _make_process_daemon()
@@ -290,7 +290,7 @@ class TestUpdateTaskStatus(unittest.TestCase):
         self.assertIn('is_processing', query)
         self.assertIn('FALSE', query.upper())
 
-    @patch('daemons.process_daemon.db_manager')
+    @patch('task_manager.db_manager')
     def test_completed_does_not_increment_retry_count(self, mock_db):
         """status='completed' 時，SQL 不應遞增 retry_count"""
         d = _make_process_daemon()
@@ -298,7 +298,7 @@ class TestUpdateTaskStatus(unittest.TestCase):
         query = mock_db.execute_query.call_args[0][0]
         self.assertNotIn('retry_count', query)
 
-    @patch('daemons.process_daemon.db_manager')
+    @patch('task_manager.db_manager')
     def test_processing_does_not_clear_is_processing(self, mock_db):
         """status='processing' 時，不應碰 is_processing"""
         d = _make_process_daemon()
@@ -306,7 +306,7 @@ class TestUpdateTaskStatus(unittest.TestCase):
         query = mock_db.execute_query.call_args[0][0]
         self.assertNotIn('is_processing', query)
 
-    @patch('daemons.process_daemon.db_manager')
+    @patch('task_manager.db_manager')
     def test_progress_clamped_between_0_and_100(self, mock_db):
         """progress 應限制在 [0, 100]"""
         d = _make_process_daemon()
@@ -314,14 +314,14 @@ class TestUpdateTaskStatus(unittest.TestCase):
         params = mock_db.execute_query.call_args[0][1]
         self.assertIn(100.0, params)
 
-    @patch('daemons.process_daemon.db_manager')
+    @patch('task_manager.db_manager')
     def test_no_updates_skips_db_call(self, mock_db):
         """status=None 且無其他欄位時，不應呼叫 DB"""
         d = _make_process_daemon()
         d.update_task_status(task_id=1, status=None)
         mock_db.execute_query.assert_not_called()
 
-    @patch('daemons.process_daemon.db_manager')
+    @patch('task_manager.db_manager')
     def test_error_message_truncated_to_1000(self, mock_db):
         """error_message 超過 1000 字元時應截斷"""
         d = _make_process_daemon()
@@ -336,7 +336,7 @@ class TestUpdateTaskStatus(unittest.TestCase):
 class TestCleanupStaleTasksCoalesce(unittest.TestCase):
     """cleanup_stale_tasks() — COALESCE 確保 NULL start_time 使用 updated_at/created_at"""
 
-    @patch('daemons.process_daemon.db_manager')
+    @patch('task_manager.db_manager')
     def test_query_uses_coalesce(self, mock_db):
         """SELECT 查詢必須使用 COALESCE(start_time, updated_at, created_at)"""
         d = _make_process_daemon()
@@ -348,7 +348,7 @@ class TestCleanupStaleTasksCoalesce(unittest.TestCase):
         self.assertIn('updated_at', select_query)
         self.assertIn('created_at', select_query)
 
-    @patch('daemons.process_daemon.db_manager')
+    @patch('task_manager.db_manager')
     def test_marks_stale_tasks_as_failed_and_clears_lock(self, mock_db):
         """過時任務應標記為 failed 且清除 processing_lock"""
         d = _make_process_daemon()
