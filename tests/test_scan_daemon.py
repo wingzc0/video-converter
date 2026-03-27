@@ -183,7 +183,7 @@ class TestScanDirectoryFiltering(unittest.TestCase):
                         if 'INSERT' in str(c)]
         self.assertEqual(len(insert_calls), 1)
         insert_args = str(insert_calls[0])
-        self.assertIn('480p_video.mp4', insert_args)
+        self.assertIn('480p_video_mpg.mp4', insert_args)
         self.assertNotIn('.mpg', insert_args.split('480p_video')[1])
 
     @patch('task_manager.db_manager')
@@ -199,8 +199,23 @@ class TestScanDirectoryFiltering(unittest.TestCase):
                         if 'INSERT' in str(c)]
         self.assertEqual(len(insert_calls), 1)
         insert_args = str(insert_calls[0])
-        self.assertIn('480p_clip.mp4', insert_args)
+        self.assertIn('480p_clip_mxf.mp4', insert_args)
         self.assertNotIn('.MXF', insert_args.split('480p_clip')[1])
+
+    @patch('task_manager.db_manager')
+    @patch('daemons.scan_daemon.get_video_info')
+    def test_mp4_input_keeps_clean_name(self, mock_info, mock_db):
+        """.mp4 輸入不加原始副檔名後綴，維持 480p_video.mp4"""
+        (self.input_dir / 'video.mp4').touch()
+        mock_db.execute_query.side_effect = [[], 1]
+        mock_info.return_value = {'width': 1280, 'height': 720, 'resolution': '1280x720'}
+        daemon = self._make_daemon()
+        daemon.scan_directory()
+        insert_calls = [c for c in mock_db.execute_query.call_args_list
+                        if 'INSERT' in str(c)]
+        self.assertEqual(len(insert_calls), 1)
+        self.assertIn('480p_video.mp4', str(insert_calls[0]))
+        self.assertNotIn('480p_video_mp4.mp4', str(insert_calls[0]))
 
     @patch('task_manager.db_manager')
     @patch('daemons.scan_daemon.get_video_info')

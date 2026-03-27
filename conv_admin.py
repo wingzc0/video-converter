@@ -310,12 +310,14 @@ def cmd_add_file(file_paths):
             continue
 
         # Compute output path the same way scan_daemon does
+        orig_suffix = file_path.suffix[1:].lower()
+        out_name = f"480p_{file_path.stem}.mp4" if orig_suffix == "mp4" else f"480p_{file_path.stem}_{orig_suffix}.mp4"
         try:
             relative = file_path.relative_to(input_dir)
-            out_path = output_dir / relative.parent / f"480p_{file_path.stem}.mp4"
+            out_path = output_dir / relative.parent / out_name
         except ValueError:
             # File is outside INPUT_DIRECTORY — place output alongside input file
-            out_path = file_path.parent / f"480p_{file_path.stem}.mp4"
+            out_path = file_path.parent / out_name
 
         # Probe resolution via ffprobe
         video_info = get_video_info(str(file_path))
