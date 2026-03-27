@@ -25,7 +25,7 @@
 ```
 video-converter/
 │
-├── conv_admin.py              # 資料庫診斷與維護工具：目錄預覽、任務統計、手動重試/清理
+├── conv_admin.py              # 資料庫診斷與維護工具：目錄預覽、任務統計、手動重試/清理/kill 孤兒 ffmpeg
 │
 ├── converter.py               # 核心 FFmpeg 封裝模組
 │                              #   get_video_info()     – 用 ffprobe 取得解析度與元數據
@@ -85,6 +85,8 @@ video-converter/
 │                              #   更新任務狀態：pending → processing → completed/failed
 │                              #   自動重試失敗任務（每 RETRY_INTERVAL_CYCLES 次 check 執行一次）
 │                              #   自動清除過時任務（每次 check 都執行，閾值 STALE_HOURS）
+│                              #   每次 stale cleanup 同時 kill 孤兒 ffmpeg：
+│                              #     不在本 daemon 子孫樹下、且 source file 有 DB 記錄的 ffmpeg 程序
 │                              #   所有 DB 操作透過 TaskRepository（task_manager.py）
 │
 ├── api/
