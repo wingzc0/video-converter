@@ -109,9 +109,12 @@ class ScanDaemon(BaseDaemon):
                             continue
 
                     # ── Step 2: 計算輸出路徑（純字串運算，無 NFS I/O）────────────────
+                    # 一律使用 .mp4 副檔名：converter 輸出 H.264+AAC，
+                    # 僅 MP4 容器能完全相容，mpg/mxf/avi 等容器會導致 mux 失敗。
                     relative_path = file_path.relative_to(self.base_input_dir)
                     output_dir = self.base_output_dir / relative_path.parent
-                    output_path = output_dir / f"480p_{filename}"
+                    stem = file_path.stem
+                    output_path = output_dir / f"480p_{stem}.mp4"
 
                     # ── Step 3: 輸出檔已存在則跳過（一次 stat，避免 ffprobe）────────
                     if output_path.exists():

@@ -172,6 +172,38 @@ class TestScanDirectoryFiltering(unittest.TestCase):
 
     @patch('task_manager.db_manager')
     @patch('daemons.scan_daemon.get_video_info')
+    def test_output_always_mp4_for_mpg(self, mock_info, mock_db):
+        """mpg 輸入檔的 output_path 應一律使用 .mp4 副檔名"""
+        (self.input_dir / 'video.mpg').touch()
+        mock_db.execute_query.side_effect = [[], 1]
+        mock_info.return_value = {'width': 1920, 'height': 1080, 'resolution': '1920x1080'}
+        daemon = self._make_daemon()
+        daemon.scan_directory()
+        insert_calls = [c for c in mock_db.execute_query.call_args_list
+                        if 'INSERT' in str(c)]
+        self.assertEqual(len(insert_calls), 1)
+        insert_args = str(insert_calls[0])
+        self.assertIn('480p_video.mp4', insert_args)
+        self.assertNotIn('.mpg', insert_args.split('480p_video')[1])
+
+    @patch('task_manager.db_manager')
+    @patch('daemons.scan_daemon.get_video_info')
+    def test_output_always_mp4_for_mxf(self, mock_info, mock_db):
+        """mxf 輸入檔的 output_path 應一律使用 .mp4 副檔名"""
+        (self.input_dir / 'clip.MXF').touch()
+        mock_db.execute_query.side_effect = [[], 1]
+        mock_info.return_value = {'width': 3840, 'height': 2160, 'resolution': '3840x2160'}
+        daemon = self._make_daemon()
+        daemon.scan_directory()
+        insert_calls = [c for c in mock_db.execute_query.call_args_list
+                        if 'INSERT' in str(c)]
+        self.assertEqual(len(insert_calls), 1)
+        insert_args = str(insert_calls[0])
+        self.assertIn('480p_clip.mp4', insert_args)
+        self.assertNotIn('.MXF', insert_args.split('480p_clip')[1])
+
+    @patch('task_manager.db_manager')
+    @patch('daemons.scan_daemon.get_video_info')
     def test_skips_already_in_db_pending(self, mock_info, mock_db):
         """DB 中已有 pending 記錄時，不應呼叫 ffprobe"""
         (self.input_dir / 'existing.mp4').touch()
