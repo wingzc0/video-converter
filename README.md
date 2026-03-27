@@ -29,7 +29,9 @@ video-converter/
 │
 ├── converter.py               # 核心 FFmpeg 封裝模組
 │                              #   get_video_info()     – 用 ffprobe 取得解析度與元數據
-│                              #   convert_to_480p()    – ffmpeg 轉檔，支援進度回調
+│                              #   convert_to_480p()    – ffmpeg 轉檔，支援進度回調與雙層超時保護
+│                              #                          回傳 (success: bool, error: str | None)
+│                              #                          失敗時 error 包含 ffmpeg stderr 最後幾行
 │                              #   get_video_duration() – 用 ffprobe 取得影片時長
 │
 ├── db_manager.py              # MariaDB 連接池管理（mysql.connector）
@@ -65,6 +67,7 @@ video-converter/
 │                              #   使用資料庫列鎖（is_processing 旗標）防止重複處理
 │                              #   worker() 統一管理鎖生命週期（lock_acquired 旗標 + finally 釋放）
 │                              #   呼叫 converter.convert_to_480p() 並即時回報進度
+│                              #   ffmpeg 雙層超時保護：stall timeout（無進度）+ absolute timeout
 │                              #   轉檔完成後驗證輸出時長（abs 差值 > DURATION_THRESHOLD → failed）
 │                              #   status='completed'/'failed' 時原子性清除 is_processing 旗標
 │                              #   retry_count 在 update_task_status(failed) 時遞增（非重新排入時）
@@ -115,6 +118,9 @@ video-converter/
       │  取得列鎖（is_processing=TRUE）
       ▼
 [ converter.py ] ──── ffmpeg ────► OUTPUT_DIRECTORY/480p_<檔名>
+      │  watchdog thread：stall timeout（無進度 FFMPEG_STALL_TIMEOUT 秒）
+      │             ：absolute timeout（FFMPEG_TIMEOUT 秒上限）
+      │  失敗時回傳 ffmpeg stderr 最後幾行供診斷
       │
       ├─► ffprobe 驗證輸出時長（abs 差 > DURATION_THRESHOLD → failed + retry）
       └─► 更新資料庫：status='processing'（含進度 %）→ 'completed'（完成）/'failed'（失敗）
@@ -168,6 +174,8 @@ cp .env.sample .env
 | `RETRY_INTERVAL_CYCLES` | 每幾個 check cycle 執行一次重試（預設：`10`） |
 | `STALE_HOURS` | 任務卡在 processing 超過幾小時視為過時（預設：`1`，NFS 長時轉檔建議 `4` 以上） |
 | `DURATION_THRESHOLD` | 輸出檔長度驗證閾值（秒）：輸出與來源時長差超過此值（abs）則視為不完整並重新加入佇列；設 `0` 停用驗證（預設：`2.0`） |
+| `FFMPEG_TIMEOUT` | ffmpeg 整體轉檔絕對上限（秒）；超過即強制終止並標記失敗；設 `0` 停用（預設：`7200`，即 2 小時） |
+| `FFMPEG_STALL_TIMEOUT` | ffmpeg 無進度輸出超時（秒）；適用於 NFS I/O stall 導致 ffmpeg 停住但不退出的情況；設 `0` 停用（預設：`300`，即 5 分鐘） |
 | `API_SERVER_HOST`、`API_SERVER_PORT`、`API_SERVER_URL` | API 伺服器設定 |
 | `LOG_LEVEL` | 日誌等級 |
 
