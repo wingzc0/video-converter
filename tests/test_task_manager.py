@@ -278,10 +278,11 @@ class TestGetRecentFailedTasks(unittest.TestCase):
 class TestResetTasksToPending(unittest.TestCase):
 
     @patch('task_manager.db_manager')
-    def test_returns_count_of_task_ids(self, mock_db):
-        mock_db.execute_query.return_value = 3
+    def test_returns_actual_rowcount(self, mock_db):
+        """回傳 DB 實際更新的 rowcount，而非 len(task_ids)"""
+        mock_db.execute_query.return_value = 2  # 只有 2 筆實際更新（其中 1 筆不存在）
         result = _repo().reset_tasks_to_pending([1, 2, 3])
-        self.assertEqual(result, 3)
+        self.assertEqual(result, 2)
 
     @patch('task_manager.db_manager')
     def test_query_sets_pending_and_zeroes_retry(self, mock_db):
@@ -297,7 +298,16 @@ class TestResetTasksToPending(unittest.TestCase):
         _repo().reset_tasks_to_pending([10, 20])
         query = mock_db.execute_query.call_args[0][0]
         params = mock_db.execute_query.call_args[0][1]
+        # params = (reason_string, id1, id2) → 1 reason %s + len(ids) %s
         self.assertEqual(query.count('%s'), len(params))
+
+    @patch('task_manager.db_manager')
+    def test_custom_reason_appears_in_query_params(self, mock_db):
+        """reason 參數應出現在 SQL 參數中"""
+        mock_db.execute_query.return_value = 1
+        _repo().reset_tasks_to_pending([5], reason='manual reset via --reset-task')
+        params = mock_db.execute_query.call_args[0][1]
+        self.assertIn('manual reset via --reset-task', params[0])
 
     @patch('task_manager.db_manager')
     def test_db_error_returns_zero(self, mock_db):

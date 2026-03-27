@@ -355,6 +355,28 @@ class TestKillOrphanedFfmpeg(unittest.TestCase):
         mock_kill.assert_not_called()
         self.assertEqual(count, 0)
 
+    @patch('task_manager.db_manager')
+    @patch('psutil.process_iter')
+    @patch('daemons.process_daemon.ProcessDaemon._get_daemon_descendant_pids')
+    def test_toctou_skip_if_completed_on_second_check(self, mock_pids, mock_iter, mock_db):
+        """TOCTOU 防護：第一次查 status=processing，第二次查 status=completed → 不 kill"""
+        d = _make_process_daemon()
+        mock_pids.return_value = {os.getpid()}
+
+        orphan = self._make_mock_proc(4444, ['ffmpeg', '-i', '/videos/race.mp4', '/tmp/out.mp4'])
+        mock_iter.return_value = [orphan]
+        # First call: processing; second call (double-check): completed
+        mock_db.execute_query.side_effect = [
+            [{'id': 20, 'status': 'processing', 'output_path': '/out/race.mp4'}],
+            [{'id': 20, 'status': 'completed', 'output_path': '/out/race.mp4'}],
+        ]
+
+        with patch('os.kill') as mock_kill:
+            count = d.kill_orphaned_ffmpeg()
+
+        mock_kill.assert_not_called()
+        self.assertEqual(count, 0)
+
     """acquire_task_lock() / release_task_lock() — 防止重複處理"""
 
     @patch('task_manager.db_manager')

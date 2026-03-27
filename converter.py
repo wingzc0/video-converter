@@ -23,10 +23,14 @@ def get_video_info(input_path):
         # 獲取第一個視訊流的解析度
         for stream in data.get('streams', []):
             if stream.get('codec_type') == 'video':
+                width = stream.get('width')
+                height = stream.get('height')
+                if width is None or height is None:
+                    return None
                 return {
-                    'width': stream.get('width'),
-                    'height': stream.get('height'),
-                    'resolution': f"{stream.get('width')}x{stream.get('height')}"
+                    'width': width,
+                    'height': height,
+                    'resolution': f"{width}x{height}"
                 }
         return None
     except Exception as e:

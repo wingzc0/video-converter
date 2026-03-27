@@ -321,21 +321,21 @@ class TaskRepository:
             self._logger.error(f"Error cleaning up stale tasks: {str(e)}")
             return 0
 
-    def reset_tasks_to_pending(self, task_ids):
-        """將指定 task_ids 重置為 pending（retry_count 歸零），回傳重置數量"""
+    def reset_tasks_to_pending(self, task_ids, reason='manual reset'):
+        """將指定 task_ids 重置為 pending（retry_count 歸零），回傳實際重置數量"""
         if not task_ids:
             return 0
         try:
             placeholders = ','.join(['%s'] * len(task_ids))
-            db_manager.execute_query(
+            rows = db_manager.execute_query(
                 f"""UPDATE conversion_tasks
                     SET status='pending', is_processing=FALSE,
                         retry_count=0,
-                        error_message=CONCAT('Reset from maxed-failed: ', COALESCE(error_message,''))
+                        error_message=CONCAT(%s, COALESCE(error_message,''))
                     WHERE id IN ({placeholders})""",
-                tuple(task_ids)
+                (f'[{reason}] ',) + tuple(task_ids)
             )
-            return len(task_ids)
+            return rows or 0
         except Exception as e:
             self._logger.error(f"Error resetting tasks to pending: {str(e)}")
             return 0

@@ -296,6 +296,12 @@ class ProcessDaemon(BaseDaemon):
                 if task.get('status') not in ('pending', 'processing'):
                     continue
 
+                # Double-check status right before kill to close the TOCTOU window
+                # (task may have completed between the first check and now).
+                task = self.task_repo.get_task_by_input_path(input_path)
+                if task is None or task.get('status') not in ('pending', 'processing'):
+                    continue
+
                 self.logger.warning(
                     f"Killing orphaned ffmpeg PID {proc.pid} "
                     f"(task_id={task['id']}, status={task.get('status')}, input={input_path})"

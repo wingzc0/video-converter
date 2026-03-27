@@ -90,6 +90,24 @@ class TestGetVideoInfo(unittest.TestCase):
         info = get_video_info('/fake/video.mp4')
         self.assertEqual(info['width'], 640)
 
+    @patch('converter.subprocess.run')
+    def test_missing_width_height_returns_none(self, mock_run):
+        """video stream 缺少 width/height 時應回傳 None，不產生 'NonexNone' 字串"""
+        mock_run.return_value = MagicMock(
+            stdout=json.dumps({'streams': [{'codec_type': 'video'}]}),
+            returncode=0
+        )
+        self.assertIsNone(get_video_info('/fake/video.mp4'))
+
+    @patch('converter.subprocess.run')
+    def test_null_width_returns_none(self, mock_run):
+        """width 為 null（JSON null → Python None）時應回傳 None"""
+        mock_run.return_value = MagicMock(
+            stdout=json.dumps({'streams': [{'codec_type': 'video', 'width': None, 'height': 1080}]}),
+            returncode=0
+        )
+        self.assertIsNone(get_video_info('/fake/video.mp4'))
+
 
 class TestGetVideoDuration(unittest.TestCase):
     """get_video_duration() 使用 mock subprocess"""

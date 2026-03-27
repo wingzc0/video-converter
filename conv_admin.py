@@ -144,7 +144,7 @@ def cmd_reset_maxed_failed(max_retries=3):
     if confirm != 'y':
         print("Aborted.")
         return
-    task_repo.reset_tasks_to_pending([t['id'] for t in tasks])
+    task_repo.reset_tasks_to_pending([t['id'] for t in tasks], reason='reset-maxed-failed')
     print(f"Reset {len(tasks)} task(s) to pending.")
 
 
@@ -166,7 +166,7 @@ def cmd_reset_task(task_ids):
         print("No valid task IDs to reset.")
         return
 
-    count = task_repo.reset_tasks_to_pending(found)
+    count = task_repo.reset_tasks_to_pending(found, reason='manual reset via --reset-task')
     print(f"\nReset {count} task(s) to pending (retry_count=0).")
 
 
@@ -251,6 +251,12 @@ def cmd_kill_stale_ffmpeg(dry_run=False):
             # Only kill if the task is in an active state; skip completed/failed
             # to avoid killing unrelated ffmpeg processes using the same source file.
             if task.get('status') not in ('pending', 'processing'):
+                continue
+
+            # Double-check status right before kill to close the TOCTOU window
+            # (task may have completed between the first check and now).
+            task = task_repo.get_task_by_input_path(input_path)
+            if task is None or task.get('status') not in ('pending', 'processing'):
                 continue
 
             print(f"  {'[DRY-RUN] ' if dry_run else ''}Kill ffmpeg PID {proc.pid} "
