@@ -312,6 +312,8 @@ python monitor_daemons.py -c
 | `--max-retries N` | 重試次數上限（預設 3，搭配 --retry-failed / --reset-maxed-failed） |
 | `--cleanup-stale` | 手動將卡住的 processing 任務標為 failed |
 | `--stale-hours N` | 過時閾值（小時，預設 24，搭配 --cleanup-stale 使用） |
+| `--kill-stale-ffmpeg` | Kill 不在 process daemon 子孫樹下且 source file 有 DB 記錄的孤兒 ffmpeg 程序 |
+| `--dry-run` | 僅列出會被 kill 的程序，不實際執行（搭配 --kill-stale-ffmpeg 使用） |
 
 ## 使用範例
 
@@ -330,6 +332,12 @@ python3 conv_admin.py --reset-maxed-failed
 
 # 清除超過 2 小時未完成的過時任務
 python3 conv_admin.py --cleanup-stale --stale-hours 2
+
+# 預覽孤兒 ffmpeg（不實際 kill）
+python3 conv_admin.py --kill-stale-ffmpeg --dry-run
+
+# Kill 孤兒 ffmpeg（不在 process daemon 下且 source file 有 DB 記錄）
+python3 conv_admin.py --kill-stale-ffmpeg
 ```
 
 ---

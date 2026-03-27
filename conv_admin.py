@@ -11,8 +11,10 @@ bcvnas-converter 資料庫診斷與維護工具
   python3 conv_admin.py --retry-failed
   python3 conv_admin.py --cleanup-stale [--stale-hours N]
   python3 conv_admin.py --reset-maxed-failed [--max-retries N]
+  python3 conv_admin.py --kill-stale-ffmpeg [--dry-run]
 """
 import os
+import signal
 import argparse
 from pathlib import Path
 
@@ -152,6 +154,99 @@ def cmd_cleanup_stale(hours=24):
         print(f"Cleaned up {count} stale task(s) (>{hours}h in processing).")
 
 # ---------------------------------------------------------------------------
+# Kill orphaned ffmpeg processes
+# ---------------------------------------------------------------------------
+
+def _get_process_daemon_descendant_pids():
+    """
+    讀取 process daemon PID 檔，回傳其所有子孫 PID 集合（含自身）。
+    若 daemon 未執行或 psutil 不可用，回傳空集合。
+    """
+    try:
+        import psutil
+    except ImportError:
+        return set()
+
+    pid_file = Path(os.getenv('PROCESS_DAEMON_PID_FILE',
+                              '/var/run/video-converter/processor.pid'))
+    if not pid_file.exists():
+        return set()
+
+    try:
+        daemon_pid = int(pid_file.read_text().strip())
+        proc = psutil.Process(daemon_pid)
+        pids = {proc.pid}
+        for child in proc.children(recursive=True):
+            pids.add(child.pid)
+        return pids
+    except (ValueError, psutil.NoSuchProcess, psutil.AccessDenied):
+        return set()
+
+
+def cmd_kill_stale_ffmpeg(dry_run=False):
+    try:
+        import psutil
+    except ImportError:
+        print("psutil 未安裝，無法掃描 ffmpeg 程序。請執行: pip install psutil")
+        return
+
+    task_repo = TaskRepository()
+    daemon_pids = _get_process_daemon_descendant_pids()
+    if daemon_pids:
+        print(f"Process daemon running (PID {next(iter(daemon_pids))}), "
+              f"excluding {len(daemon_pids)} descendant PID(s) from kill list.")
+    else:
+        print("Process daemon not running (or PID file not found); all ffmpeg processes are candidates.")
+
+    killed = 0
+    skipped = 0
+
+    for proc in psutil.process_iter(['pid', 'name', 'cmdline']):
+        try:
+            if proc.info['name'] != 'ffmpeg':
+                continue
+            if proc.pid in daemon_pids:
+                skipped += 1
+                continue
+
+            cmdline = proc.info['cmdline'] or []
+            input_path = None
+            for idx, arg in enumerate(cmdline):
+                if arg == '-i' and idx + 1 < len(cmdline):
+                    input_path = cmdline[idx + 1]
+                    break
+
+            if not input_path:
+                continue
+
+            task = task_repo.get_task_by_input_path(input_path)
+            if task is None:
+                continue
+
+            print(f"  {'[DRY-RUN] ' if dry_run else ''}Kill ffmpeg PID {proc.pid} "
+                  f"(task_id={task['id']}, status={task.get('status','?')}, "
+                  f"input={input_path})")
+            if not dry_run:
+                try:
+                    os.kill(proc.pid, signal.SIGKILL)
+                    killed += 1
+                except ProcessLookupError:
+                    print(f"    (already gone)")
+
+        except (psutil.NoSuchProcess, psutil.AccessDenied):
+            continue
+
+    if dry_run:
+        print("Dry-run complete. Use without --dry-run to actually kill.")
+    else:
+        if killed == 0:
+            print("No orphaned ffmpeg processes found.")
+        else:
+            print(f"Killed {killed} orphaned ffmpeg process(es).")
+    if skipped:
+        print(f"Skipped {skipped} ffmpeg process(es) under process daemon.")
+
+# ---------------------------------------------------------------------------
 # Argument parser & entry point
 # ---------------------------------------------------------------------------
 
@@ -167,6 +262,8 @@ def parse_arguments():
   python3 conv_admin.py --cleanup-stale --stale-hours 2
   python3 conv_admin.py --reset-maxed-failed
   python3 conv_admin.py --reset-maxed-failed --max-retries 5
+  python3 conv_admin.py --kill-stale-ffmpeg --dry-run
+  python3 conv_admin.py --kill-stale-ffmpeg
 """
     )
 
@@ -176,11 +273,14 @@ def parse_arguments():
     action.add_argument('--retry-failed',        action='store_true', help='手動重試失敗任務')
     action.add_argument('--cleanup-stale',       action='store_true', help='手動清除過時任務')
     action.add_argument('--reset-maxed-failed',  action='store_true', help='重設已達重試上限的失敗任務為 pending（retry_count 歸零）')
+    action.add_argument('--kill-stale-ffmpeg',   action='store_true', help='Kill 不在 process daemon 下且 source file 有 DB 記錄的孤兒 ffmpeg 程序')
 
     parser.add_argument('--stale-hours', type=float, default=24,
                         help='過時任務的時間閾值（小時，預設 24，僅用於 --cleanup-stale）')
     parser.add_argument('--max-retries', type=int, default=3,
                         help='最大重試次數（預設 3，僅用於 --retry-failed）')
+    parser.add_argument('--dry-run', action='store_true',
+                        help='僅列出會被 kill 的程序，不實際執行（僅用於 --kill-stale-ffmpeg）')
     return parser.parse_args()
 
 
@@ -197,6 +297,8 @@ def main():
         cmd_cleanup_stale(args.stale_hours)
     elif args.reset_maxed_failed:
         cmd_reset_maxed_failed(args.max_retries)
+    elif args.kill_stale_ffmpeg:
+        cmd_kill_stale_ffmpeg(dry_run=args.dry_run)
 
 
 if __name__ == '__main__':
