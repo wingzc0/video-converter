@@ -102,6 +102,7 @@ def convert_to_480p(input_path, output_path, progress_callback=None,
             watchdog.start()
 
         current_time = 0
+        stderr_tail = []  # 收集 ffmpeg stderr 最後幾行，失敗時用於診斷
         # FFmpeg 將進度資訊寫入 stderr 而非 stdout；
         # 逐行讀取 stderr 以解析 time= 欄位，當 readline() 回傳空字串表示子程序輸出已結束
         try:
@@ -112,6 +113,13 @@ def convert_to_480p(input_path, output_path, progress_callback=None,
                 # 忽略無法解碼的字元，不中斷進度讀取
                 line = line.decode('utf-8', errors='ignore')
                 
+                # 保留最後 20 行 stderr 供失敗診斷，進度行（frame=/fps=/time= 開頭）通常不含有效錯誤訊息
+                stripped = line.strip()
+                if stripped and not stripped.startswith('frame='):
+                    stderr_tail.append(stripped)
+                    if len(stderr_tail) > 20:
+                        stderr_tail.pop(0)
+
                 # 解析FFmpeg輸出以追蹤進度
                 if 'time=' in line:
                     time_str = line.split('time=')[1].split(' ')[0].strip()
@@ -138,7 +146,14 @@ def convert_to_480p(input_path, output_path, progress_callback=None,
         return_code = process.wait()
         if return_code == 0:
             return True, None
-        reason = timeout_reason[0] or "ffmpeg exited with non-zero return code"
+        # 組合失敗原因：timeout 原因優先，其次附上 ffmpeg stderr 最後幾行
+        base_reason = timeout_reason[0] or "ffmpeg exited with non-zero return code"
+        if stderr_tail:
+            # 只取最後 3 行避免 error_message 過長（DB 欄位限 1000 字元）
+            snippet = ' | '.join(stderr_tail[-3:])
+            reason = f"{base_reason} | stderr: {snippet}"
+        else:
+            reason = base_reason
         print(f"Conversion failed: {reason}")
         return False, reason
         

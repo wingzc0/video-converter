@@ -137,6 +137,30 @@ class TestConvertTo480p(unittest.TestCase):
 
     @patch('converter.get_video_duration', return_value=100.0)
     @patch('converter.subprocess.Popen')
+    def test_failed_conversion_includes_stderr(self, mock_popen, _):
+        """失敗時 error 應包含 ffmpeg stderr 的最後幾行"""
+        mock_popen.return_value = self._make_mock_process(
+            stderr_lines=['Invalid data found when processing input'],
+            returncode=1,
+        )
+        success, error = convert_to_480p('/input.mp4', '/output.mp4')
+        self.assertFalse(success)
+        self.assertIn('Invalid data found', error)
+
+    @patch('converter.get_video_duration', return_value=100.0)
+    @patch('converter.subprocess.Popen')
+    def test_success_has_no_error(self, mock_popen, _):
+        """成功時 error 應為 None"""
+        mock_popen.return_value = self._make_mock_process(
+            stderr_lines=['Some info line'],
+            returncode=0,
+        )
+        success, error = convert_to_480p('/input.mp4', '/output.mp4')
+        self.assertTrue(success)
+        self.assertIsNone(error)
+
+    @patch('converter.get_video_duration', return_value=100.0)
+    @patch('converter.subprocess.Popen')
     def test_progress_callback_called(self, mock_popen, _):
         """確認 time= 行會觸發 progress_callback"""
         mock_popen.return_value = self._make_mock_process(
