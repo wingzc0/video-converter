@@ -45,6 +45,14 @@ class ProcessDaemon(BaseDaemon):
         # 設為 0 可停用長度驗證
         self.duration_threshold = float(os.getenv('DURATION_THRESHOLD', '2.0'))
 
+        # ffmpeg 超時保護
+        # FFMPEG_TIMEOUT：整體轉檔絕對上限（秒），0 表示不限制
+        # FFMPEG_STALL_TIMEOUT：多久無進度輸出即視為 NFS stall（秒），0 表示不限制
+        _ft = int(os.getenv('FFMPEG_TIMEOUT', '7200'))
+        _fst = int(os.getenv('FFMPEG_STALL_TIMEOUT', '300'))
+        self.ffmpeg_timeout = _ft if _ft > 0 else None
+        self.ffmpeg_stall_timeout = _fst if _fst > 0 else None
+
         # 時間限制設定
         self.enable_time_restriction = os.getenv('ENABLE_TIME_RESTRICTION', 'false').strip().lower() == 'true'
         self.allowed_start_time = self._parse_time(os.getenv('ALLOWED_START_TIME', '22:00'))
@@ -58,6 +66,10 @@ class ProcessDaemon(BaseDaemon):
         self.logger.info(f"Process daemon initialized with {self.max_workers} workers")
         self.logger.info(f"Check interval: {self.check_interval} seconds")
         self.logger.info(f"Max retries: {self.max_retries}, retry every {self.retry_interval_cycles} cycles, stale after {self.stale_hours}h")
+        self.logger.info(
+            f"ffmpeg timeout: {self.ffmpeg_timeout or 'disabled'}s, "
+            f"stall timeout: {self.ffmpeg_stall_timeout or 'disabled'}s"
+        )
         if self.enable_time_restriction:
             self.logger.info(f"Time restriction enabled: {self.allowed_start_time.strftime('%H:%M')} - {self.allowed_end_time.strftime('%H:%M')}")
 
@@ -224,7 +236,11 @@ class ProcessDaemon(BaseDaemon):
                 self.update_task_status(task_id, 'processing', progress=progress)
             
             # 執行轉檔
-            success = convert_to_480p(input_path, output_path, progress_callback)
+            success, conv_error = convert_to_480p(
+                input_path, output_path, progress_callback,
+                ffmpeg_timeout=self.ffmpeg_timeout,
+                ffmpeg_stall_timeout=self.ffmpeg_stall_timeout,
+            )
             
             # 更新最終狀態
             if success:
@@ -260,9 +276,10 @@ class ProcessDaemon(BaseDaemon):
                 self.processing_progress['tasks_completed'] += 1
                 self.logger.info(f"Task {task_id} completed successfully: {output_path}")
             else:
-                self.update_task_status(task_id, 'failed', error_message="Conversion failed")
+                error_msg = conv_error or "Conversion failed"
+                self.update_task_status(task_id, 'failed', error_message=error_msg)
                 self.processing_progress['tasks_failed'] += 1
-                self.logger.error(f"Task {task_id} failed: {input_path}")
+                self.logger.error(f"Task {task_id} failed: {input_path} ({error_msg})")
             
         except Exception as e:
             error_msg = f"Error processing task {task_id}: {str(e)}"

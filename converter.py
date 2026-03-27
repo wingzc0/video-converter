@@ -1,6 +1,7 @@
 import subprocess
 import json
 import os
+import threading
 from pathlib import Path
 import time
 
@@ -32,8 +33,14 @@ def get_video_info(input_path):
         print(f"Error getting video info: {e}")
         return None
 
-def convert_to_480p(input_path, output_path, progress_callback=None):
-    """使用FFmpeg將影片轉換為480p，支援進度回調"""
+def convert_to_480p(input_path, output_path, progress_callback=None,
+                    ffmpeg_timeout=None, ffmpeg_stall_timeout=None):
+    """使用FFmpeg將影片轉換為480p，支援進度回調與超時保護
+
+    Args:
+        ffmpeg_timeout: 整體轉檔絕對上限（秒）。None 表示不限制。
+        ffmpeg_stall_timeout: 多久未收到 ffmpeg 進度輸出即視為停頓（秒）。None 表示不限制。
+    """
     # FFmpeg命令：自動縮放至480p並保持比例
     cmd = [
         'ffmpeg',
@@ -65,7 +72,35 @@ def convert_to_480p(input_path, output_path, progress_callback=None):
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
         )
-        
+
+        # Watchdog：獨立執行緒監控 stall timeout 與 absolute timeout，
+        # 兩者任一超時皆殺掉 ffmpeg 並設旗標，主執行緒讀取旗標後回傳 False
+        timeout_reason = [None]  # 使用 list 讓 closure 可修改
+
+        def _watchdog(proc, start_time, last_progress_time_ref):
+            while proc.poll() is None:
+                now = time.monotonic()
+                if ffmpeg_timeout and (now - start_time) >= ffmpeg_timeout:
+                    timeout_reason[0] = f"ffmpeg absolute timeout ({ffmpeg_timeout}s)"
+                    proc.kill()
+                    return
+                if ffmpeg_stall_timeout and (now - last_progress_time_ref[0]) >= ffmpeg_stall_timeout:
+                    timeout_reason[0] = f"ffmpeg stall timeout ({ffmpeg_stall_timeout}s without progress)"
+                    proc.kill()
+                    return
+                time.sleep(2)
+
+        start_time = time.monotonic()
+        last_progress_time = [start_time]  # list 讓 watchdog closure 可讀取最新值
+
+        if ffmpeg_timeout or ffmpeg_stall_timeout:
+            watchdog = threading.Thread(
+                target=_watchdog,
+                args=(process, start_time, last_progress_time),
+                daemon=True,
+            )
+            watchdog.start()
+
         current_time = 0
         # FFmpeg 將進度資訊寫入 stderr 而非 stdout；
         # 逐行讀取 stderr 以解析 time= 欄位，當 readline() 回傳空字串表示子程序輸出已結束
@@ -81,6 +116,7 @@ def convert_to_480p(input_path, output_path, progress_callback=None):
                 if 'time=' in line:
                     time_str = line.split('time=')[1].split(' ')[0].strip()
                     current_time = parse_time_to_seconds(time_str)
+                    last_progress_time[0] = time.monotonic()
                     
                     if duration > 0 and progress_callback:
                         # 進度最高上限 99.9%，100% 保留給 process_task 確認輸出檔案存在後才設定，
@@ -97,14 +133,18 @@ def convert_to_480p(input_path, output_path, progress_callback=None):
             except Exception:
                 pass
             process.wait()
-            return False
+            return False, str(e)
         
         return_code = process.wait()
-        return return_code == 0
+        if return_code == 0:
+            return True, None
+        reason = timeout_reason[0] or "ffmpeg exited with non-zero return code"
+        print(f"Conversion failed: {reason}")
+        return False, reason
         
     except Exception as e:
         print(f"Conversion error: {e}")
-        return False
+        return False, str(e)
 
 def get_video_duration(input_path):
     """獲取影片總時長（秒）"""

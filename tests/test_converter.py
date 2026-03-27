@@ -123,15 +123,17 @@ class TestConvertTo480p(unittest.TestCase):
     @patch('converter.subprocess.Popen')
     def test_successful_conversion_returns_true(self, mock_popen, _):
         mock_popen.return_value = self._make_mock_process(returncode=0)
-        result = convert_to_480p('/input.mp4', '/output.mp4')
-        self.assertTrue(result)
+        success, error = convert_to_480p('/input.mp4', '/output.mp4')
+        self.assertTrue(success)
+        self.assertIsNone(error)
 
     @patch('converter.get_video_duration', return_value=100.0)
     @patch('converter.subprocess.Popen')
     def test_failed_conversion_returns_false(self, mock_popen, _):
         mock_popen.return_value = self._make_mock_process(returncode=1)
-        result = convert_to_480p('/input.mp4', '/output.mp4')
-        self.assertFalse(result)
+        success, error = convert_to_480p('/input.mp4', '/output.mp4')
+        self.assertFalse(success)
+        self.assertIsNotNone(error)
 
     @patch('converter.get_video_duration', return_value=100.0)
     @patch('converter.subprocess.Popen')
@@ -171,8 +173,40 @@ class TestConvertTo480p(unittest.TestCase):
         # 包含非 UTF-8 bytes，但 errors='ignore' 應能正常處理
         mock_proc.stderr.readline.side_effect = [b'\xa3\xb4 time=00:00:10.00', b'']
         mock_popen.return_value = mock_proc
-        result = convert_to_480p('/input.mp4', '/output.mp4')
-        self.assertTrue(result)
+        success, error = convert_to_480p('/input.mp4', '/output.mp4')
+        self.assertTrue(success)
+
+    @patch('converter.get_video_duration', return_value=100.0)
+    @patch('converter.subprocess.Popen')
+    def test_stall_timeout_kills_ffmpeg(self, mock_popen, _):
+        """stall_timeout 超時後應殺掉 ffmpeg 並回傳 (False, <reason>)"""
+        import threading as _threading
+
+        mock_proc = MagicMock()
+        # stderr.readline 永遠阻塞，直到 kill() 被呼叫後才回傳空字串
+        kill_event = _threading.Event()
+
+        def _blocking_readline():
+            kill_event.wait(timeout=5)
+            return b''
+
+        mock_proc.stderr.readline.side_effect = _blocking_readline
+        mock_proc.poll.return_value = None
+        mock_proc.wait.return_value = -9
+
+        def _do_kill():
+            kill_event.set()
+            mock_proc.poll.return_value = -9
+
+        mock_proc.kill.side_effect = _do_kill
+        mock_popen.return_value = mock_proc
+
+        success, error = convert_to_480p(
+            '/input.mp4', '/output.mp4',
+            ffmpeg_stall_timeout=1,  # 1 秒無進度即 timeout
+        )
+        self.assertFalse(success)
+        self.assertIn('stall', error.lower())
 
 
 if __name__ == '__main__':
