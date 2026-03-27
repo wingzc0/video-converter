@@ -63,8 +63,8 @@ video-converter/
 │   │                          #   start() / stop() / restart() / status()
 │   │
 │   ├── scan_daemon.py         # 掃描 Daemon（繼承 BaseDaemon）
-│   │                          #   遞迴遍歷 INPUT_DIRECTORY
 │   │                          #   遞迴遍歷 INPUT_DIRECTORY，輸出路徑一律使用 .mp4 副檔名
+│   │                          #   命名規則：.mp4 輸入 → 480p_{stem}.mp4；其他格式 → 480p_{stem}_{ext}.mp4
 │   │                          #   掃描順序（NFS I/O 最小化）：
 │   │                          #     1. DB 查詢 → pending/processing/failed 直接略過
 │   │                          #     2. completed → 用 DB 儲存的 output_path 做 exist 檢查（無 ffprobe）
@@ -133,7 +133,8 @@ video-converter/
       │  工作執行緒（最多 MAX_WORKERS 個）
       │  取得列鎖（is_processing=TRUE）
       ▼
-[ converter.py ] ──── ffmpeg ────► OUTPUT_DIRECTORY/480p_<檔名>
+[ converter.py ] ──── ffmpeg ────► OUTPUT_DIRECTORY/480p_<stem>.mp4（mp4 輸入）
+                                              或 480p_<stem>_<ext>.mp4（其他格式）
       │  watchdog thread：stall timeout（無進度 FFMPEG_STALL_TIMEOUT 秒）
       │             ：absolute timeout（FFMPEG_TIMEOUT 秒上限）
       │  失敗時回傳 ffmpeg stderr 最後幾行供診斷
