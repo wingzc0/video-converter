@@ -148,6 +148,14 @@ def convert_to_480p(input_path, output_path, progress_callback=None,
             return False, str(e)
         
         return_code = process.wait()
+        try:
+            process.stdout.close()
+        except Exception:
+            pass
+        try:
+            process.stderr.close()
+        except Exception:
+            pass
         if return_code == 0:
             return True, None
         # 組合失敗原因：timeout 原因優先，其次附上 ffmpeg stderr 最後幾行
