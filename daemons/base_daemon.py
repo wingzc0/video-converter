@@ -285,6 +285,10 @@ class BaseDaemon(ABC):
             # DaemonContext.__enter__ 執行 double-fork daemonization：
             # 第一次 fork 脫離終端，第二次 fork 確保 daemon 不是 session leader，防止重新獲取 tty
             with self.daemon_context:
+                # DaemonContext 在 double-fork 後會關閉所有 fd（files_preserve=[]），
+                # 包含 setup_logger() 在 __init__ 建立的 WatchedFileHandler stream fd，
+                # 因此必須在進入 daemon context 後重新初始化 logger，確保 fd 有效
+                self.logger = self.setup_logger()
                 # 在 daemonized 子程序內才啟動 status monitoring，確保 pid/狀態資訊正確
                 self.start_status_monitoring()
                 self.logger.info(f"{self.name} daemon started with PID: {os.getpid()}")
