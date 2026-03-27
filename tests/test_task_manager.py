@@ -69,6 +69,33 @@ class TestGetTaskById(unittest.TestCase):
 
 
 # ---------------------------------------------------------------------------
+# get_task_detail
+# ---------------------------------------------------------------------------
+
+class TestGetTaskDetail(unittest.TestCase):
+
+    @patch('task_manager.db_manager')
+    def test_returns_full_detail(self, mock_db):
+        mock_db.execute_query.return_value = [{
+            'id': 42, 'input_path': '/a.mp4', 'output_path': '/out/a.mp4',
+            'status': 'failed', 'retry_count': 3, 'error_message': 'timeout'
+        }]
+        result = _repo().get_task_detail(42)
+        self.assertEqual(result['status'], 'failed')
+        self.assertEqual(result['retry_count'], 3)
+
+    @patch('task_manager.db_manager')
+    def test_returns_none_when_not_found(self, mock_db):
+        mock_db.execute_query.return_value = []
+        self.assertIsNone(_repo().get_task_detail(999))
+
+    @patch('task_manager.db_manager')
+    def test_db_error_returns_none(self, mock_db):
+        mock_db.execute_query.side_effect = Exception('db down')
+        self.assertIsNone(_repo().get_task_detail(1))
+
+
+# ---------------------------------------------------------------------------
 # get_task_statistics
 # ---------------------------------------------------------------------------
 

@@ -52,6 +52,19 @@ class TaskRepository:
             self._logger.error(f"Error getting task {task_id}: {str(e)}")
             return None
 
+    def get_task_detail(self, task_id):
+        """以 task_id 取得完整任務資訊（含 status, retry_count, error_message）；找不到時回傳 None"""
+        try:
+            result = db_manager.execute_query(
+                "SELECT id, input_path, output_path, status, retry_count, error_message "
+                "FROM conversion_tasks WHERE id = %s",
+                (task_id,), fetch=True
+            )
+            return result[0] if result else None
+        except Exception as e:
+            self._logger.error(f"Error getting task detail {task_id}: {str(e)}")
+            return None
+
     def get_task_statistics(self):
         """查詢任務統計資訊，回傳 dict；查詢失敗時回傳 None"""
         try:

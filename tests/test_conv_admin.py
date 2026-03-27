@@ -227,5 +227,58 @@ class TestCmdKillStaleFfmpeg(unittest.TestCase):
         mock_kill.assert_not_called()
 
 
+class TestCmdResetTask(unittest.TestCase):
+    """cmd_reset_task() — 重設指定 task ID 為 pending"""
+
+    @patch('task_manager.db_manager')
+    def test_resets_valid_task(self, mock_db):
+        """有效 task ID 應被重設"""
+        mock_db.execute_query.side_effect = [
+            # get_task_detail SELECT
+            [{'id': 42, 'input_path': '/a.mp4', 'output_path': '/out/a.mp4',
+              'status': 'failed', 'retry_count': 3, 'error_message': 'timeout'}],
+            # reset_tasks_to_pending UPDATE
+            1,
+        ]
+        with patch('builtins.print'):
+            from conv_admin import cmd_reset_task
+            cmd_reset_task([42])
+        update_calls = [c for c in mock_db.execute_query.call_args_list
+                        if 'UPDATE' in str(c)]
+        self.assertEqual(len(update_calls), 1)
+
+    @patch('task_manager.db_manager')
+    def test_skips_nonexistent_task(self, mock_db):
+        """不存在的 task ID 應被跳過，不執行 UPDATE"""
+        mock_db.execute_query.return_value = []  # get_task_detail → not found
+        with patch('builtins.print'):
+            from conv_admin import cmd_reset_task
+            cmd_reset_task([999])
+        update_calls = [c for c in mock_db.execute_query.call_args_list
+                        if 'UPDATE' in str(c)]
+        self.assertEqual(len(update_calls), 0)
+
+    @patch('task_manager.db_manager')
+    def test_mixed_valid_and_invalid(self, mock_db):
+        """混合有效與無效 ID — 只重設有效的"""
+        mock_db.execute_query.side_effect = [
+            # task 10 found
+            [{'id': 10, 'input_path': '/a.mp4', 'output_path': '/out/a.mp4',
+              'status': 'failed', 'retry_count': 2, 'error_message': None}],
+            # task 999 not found
+            [],
+            # reset_tasks_to_pending UPDATE
+            1,
+        ]
+        with patch('builtins.print'):
+            from conv_admin import cmd_reset_task
+            cmd_reset_task([10, 999])
+        update_calls = [c for c in mock_db.execute_query.call_args_list
+                        if 'UPDATE' in str(c)]
+        self.assertEqual(len(update_calls), 1)
+        # Verify only task 10 was in the UPDATE
+        self.assertIn('10', str(update_calls[0]))
+
+
 if __name__ == '__main__':
     unittest.main()

@@ -145,6 +145,28 @@ def cmd_reset_maxed_failed(max_retries=3):
     print(f"Reset {len(tasks)} task(s) to pending.")
 
 
+def cmd_reset_task(task_ids):
+    task_repo = TaskRepository()
+    found = []
+    for tid in task_ids:
+        t = task_repo.get_task_detail(tid)
+        if t is None:
+            print(f"  ⚠ Task {tid} not found, skipping.")
+        else:
+            found.append(tid)
+            print(f"  [{t['id']}] status={t['status']}  retries={t['retry_count']}  "
+                  f"{Path(t['input_path']).name}")
+            if t.get('error_message'):
+                print(f"        error: {t['error_message'][:100]}")
+
+    if not found:
+        print("No valid task IDs to reset.")
+        return
+
+    count = task_repo.reset_tasks_to_pending(found)
+    print(f"\nReset {count} task(s) to pending (retry_count=0).")
+
+
 def cmd_cleanup_stale(hours=24):
     task_repo = TaskRepository()
     count = task_repo.cleanup_stale_tasks(stale_hours=hours)
@@ -267,6 +289,7 @@ def parse_arguments():
   python3 conv_admin.py --cleanup-stale --stale-hours 2
   python3 conv_admin.py --reset-maxed-failed
   python3 conv_admin.py --reset-maxed-failed --max-retries 5
+  python3 conv_admin.py --reset-task 123 456 789
   python3 conv_admin.py --kill-stale-ffmpeg --dry-run
   python3 conv_admin.py --kill-stale-ffmpeg
 """
@@ -278,6 +301,8 @@ def parse_arguments():
     action.add_argument('--retry-failed',        action='store_true', help='手動重試失敗任務')
     action.add_argument('--cleanup-stale',       action='store_true', help='手動清除過時任務')
     action.add_argument('--reset-maxed-failed',  action='store_true', help='重設已達重試上限的失敗任務為 pending（retry_count 歸零）')
+    action.add_argument('--reset-task',          nargs='+', type=int, metavar='ID',
+                        help='重設指定 task ID 為 pending（retry_count 歸零）')
     action.add_argument('--kill-stale-ffmpeg',   action='store_true', help='Kill 不在 process daemon 下且 source file 有 DB 記錄的孤兒 ffmpeg 程序')
 
     parser.add_argument('--stale-hours', type=float, default=24,
@@ -302,6 +327,8 @@ def main():
         cmd_cleanup_stale(args.stale_hours)
     elif args.reset_maxed_failed:
         cmd_reset_maxed_failed(args.max_retries)
+    elif args.reset_task:
+        cmd_reset_task(args.reset_task)
     elif args.kill_stale_ffmpeg:
         cmd_kill_stale_ffmpeg(dry_run=args.dry_run)
 
