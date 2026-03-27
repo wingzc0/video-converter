@@ -105,8 +105,8 @@ def cmd_stats():
     print(f"  Completed  : {s['completed']}")
     print(f"  Failed     : {s['failed']}")
     print(f"  Retried    : {s['retried'] or 0}")
-    if s['avg_sec']:
-        print(f"  Avg time   : {float(s['avg_sec']) / 60:.1f} min")
+    if s['avg_duration']:
+        print(f"  Avg time   : {float(s['avg_duration']) / 60:.1f} min")
 
     if s['failed'] and int(s['failed']) > 0:
         print("\n  Recent failed tasks (up to 5):")

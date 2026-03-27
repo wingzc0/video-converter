@@ -64,7 +64,7 @@ class TaskRepository:
                 SUM(status = 'failed')     AS failed,
                 SUM(retry_count > 0)       AS retried,
                 AVG(CASE WHEN status IN ('completed','failed')
-                    THEN TIMESTAMPDIFF(SECOND, start_time, end_time) END) AS avg_sec
+                    THEN TIMESTAMPDIFF(SECOND, start_time, end_time) END) AS avg_duration
             FROM conversion_tasks
             """
             rows = db_manager.execute_query(query, fetch=True)
@@ -73,7 +73,44 @@ class TaskRepository:
             self._logger.error(f"Error getting task statistics: {str(e)}")
             return None
 
-    def get_recent_failed_tasks(self, limit=5):
+    def get_task_by_input_path(self, input_path):
+        """以 input_path 查詢任務，回傳包含 id/status/output_path 的 dict；找不到時回傳 None"""
+        try:
+            result = db_manager.execute_query(
+                "SELECT id, status, output_path FROM conversion_tasks WHERE input_path = %s LIMIT 1",
+                (input_path,), fetch=True
+            )
+            return result[0] if result else None
+        except Exception as e:
+            self._logger.error(f"Error querying task by input_path: {str(e)}")
+            return None
+
+    def requeue_missing_output(self, input_path):
+        """將 completed 但輸出檔遺失的任務重置為 pending"""
+        try:
+            db_manager.execute_query(
+                "UPDATE conversion_tasks SET status='pending', is_processing=FALSE, "
+                "error_message='Output file missing, re-queued by scanner' "
+                "WHERE input_path=%s",
+                (input_path,)
+            )
+        except Exception as e:
+            self._logger.error(f"Error re-queuing task for {input_path}: {str(e)}")
+
+    def insert_task(self, input_path, output_path, resolution):
+        """INSERT IGNORE 新增轉檔任務，回傳 rows affected（0 表示已存在）"""
+        try:
+            return db_manager.execute_query(
+                '''INSERT IGNORE INTO conversion_tasks
+                   (input_path, output_path, source_resolution, status)
+                   VALUES (%s, %s, %s, 'pending')''',
+                (input_path, output_path, resolution)
+            )
+        except Exception as e:
+            self._logger.error(f"Error inserting task for {input_path}: {str(e)}")
+            return 0
+
+
         """回傳最近失敗任務清單"""
         try:
             query = """

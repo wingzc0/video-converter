@@ -2,8 +2,8 @@ import time
 import threading
 from datetime import datetime, timedelta
 from .base_daemon import BaseDaemon, _get_process_uptime
-from db_manager import db_manager
 from converter import get_video_info
+from task_manager import TaskRepository
 from pathlib import Path
 import os
 
@@ -45,6 +45,7 @@ class ScanDaemon(BaseDaemon):
         
         # 驗證設定
         self.validate_settings()
+        self.task_repo = TaskRepository(self.logger)
     
     def validate_settings(self):
         """驗證設定"""
@@ -90,27 +91,21 @@ class ScanDaemon(BaseDaemon):
                     
                     # ── Step 1: DB 查詢（無 NFS I/O）────────────────────────────────
                     # 同時取出 output_path，供 completed 狀態直接驗證輸出檔，避免重跑 ffprobe
-                    query = "SELECT id, status, output_path FROM conversion_tasks WHERE input_path = %s LIMIT 1"
-                    db_result = db_manager.execute_query(query, (str(file_path),), fetch=True)
-                    if db_result:
-                        db_status = db_result[0].get('status', '')
+                    task = self.task_repo.get_task_by_input_path(str(file_path))
+                    if task:
+                        db_status = task.get('status', '')
                         if db_status in ('pending', 'processing', 'failed'):
                             continue
 
                         if db_status == 'completed':
-                            stored_output = db_result[0].get('output_path', '')
+                            stored_output = task.get('output_path', '')
                             if stored_output and Path(stored_output).exists():
                                 continue  # 輸出檔存在，無需任何動作
                             # 輸出檔遺失：重新排入佇列
                             self.logger.warning(
                                 f"Output missing for completed task, re-queuing: {file_path.name}"
                             )
-                            db_manager.execute_query(
-                                "UPDATE conversion_tasks SET status='pending', is_processing=FALSE, "
-                                "error_message='Output file missing, re-queued by scanner' "
-                                "WHERE input_path=%s",
-                                (str(file_path),)
-                            )
+                            self.task_repo.requeue_missing_output(str(file_path))
                             continue
 
                     # ── Step 2: 計算輸出路徑（純字串運算，無 NFS I/O）────────────────
@@ -138,12 +133,9 @@ class ScanDaemon(BaseDaemon):
 
                         # 使用 INSERT IGNORE 防止 TOCTOU race condition：
                         # 若兩個 scan 程序同時掃到同一個檔案，不會因 UNIQUE 限制而拋出例外
-                        query = '''
-                        INSERT IGNORE INTO conversion_tasks 
-                        (input_path, output_path, source_resolution, status)
-                        VALUES (%s, %s, %s, 'pending')
-                        '''
-                        rows = db_manager.execute_query(query, (str(file_path), str(output_path), video_info['resolution']))
+                        rows = self.task_repo.insert_task(
+                            str(file_path), str(output_path), video_info['resolution']
+                        )
 
                         # rows=0 表示 INSERT IGNORE 遇到 UNIQUE 衝突而靜默忽略（另一個 scan 已先插入），
                         # 不應計入本次新增的任務數

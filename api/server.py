@@ -10,7 +10,7 @@ from flask import Flask, jsonify, request
 from flask_cors import CORS
 from flask_socketio import SocketIO, emit
 from dotenv import load_dotenv
-from db_manager import db_manager
+from task_manager import TaskRepository
 
 load_dotenv()
 
@@ -180,20 +180,7 @@ class APIServer:
     def get_task_stats(self):
         """獲取任務統計（從資料庫）"""
         try:
-            query = '''
-            SELECT 
-                COUNT(*) as total,
-                SUM(CASE WHEN status = 'pending' THEN 1 ELSE 0 END) as pending,
-                SUM(CASE WHEN status = 'processing' THEN 1 ELSE 0 END) as processing,
-                SUM(CASE WHEN status = 'completed' THEN 1 ELSE 0 END) as completed,
-                SUM(CASE WHEN status = 'failed' THEN 1 ELSE 0 END) as failed,
-                SUM(CASE WHEN retry_count > 0 THEN 1 ELSE 0 END) as retried,
-                AVG(TIMESTAMPDIFF(SECOND, start_time, end_time)) as avg_duration
-            FROM conversion_tasks
-            WHERE status IN ('pending', 'processing', 'completed', 'failed')
-            '''
-            result = db_manager.execute_query(query, fetch=True)
-            return result[0] if result else {}
+            return TaskRepository(self.logger).get_task_statistics() or {}
         except Exception as e:
             self.logger.error(f"Error getting task stats: {e}")
             return {'error': str(e)}

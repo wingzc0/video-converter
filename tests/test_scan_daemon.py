@@ -121,7 +121,7 @@ class TestScanDirectoryFiltering(unittest.TestCase):
             from daemons.scan_daemon import ScanDaemon
             return ScanDaemon(scan_interval=60)
 
-    @patch('daemons.scan_daemon.db_manager')
+    @patch('task_manager.db_manager')
     @patch('daemons.scan_daemon.get_video_info')
     def test_skips_480p_prefixed_files(self, mock_info, mock_db):
         """以 480p_ 開頭的檔案不應加入 DB"""
@@ -132,7 +132,7 @@ class TestScanDirectoryFiltering(unittest.TestCase):
         # get_video_info 不應被呼叫（檔案應在 should_skip_file 就被跳過）
         mock_info.assert_not_called()
 
-    @patch('daemons.scan_daemon.db_manager')
+    @patch('task_manager.db_manager')
     @patch('daemons.scan_daemon.get_video_info')
     def test_skips_unsupported_extension(self, mock_info, mock_db):
         """不支援的副檔名應被跳過"""
@@ -142,7 +142,7 @@ class TestScanDirectoryFiltering(unittest.TestCase):
         daemon.scan_directory()
         mock_info.assert_not_called()
 
-    @patch('daemons.scan_daemon.db_manager')
+    @patch('task_manager.db_manager')
     @patch('daemons.scan_daemon.get_video_info')
     def test_skips_low_resolution_video(self, mock_info, mock_db):
         """解析度低於 MIN_RESOLUTION 的影片不應加入 DB"""
@@ -156,7 +156,7 @@ class TestScanDirectoryFiltering(unittest.TestCase):
                         if 'INSERT' in str(c)]
         self.assertEqual(len(insert_calls), 0)
 
-    @patch('daemons.scan_daemon.db_manager')
+    @patch('task_manager.db_manager')
     @patch('daemons.scan_daemon.get_video_info')
     def test_adds_new_hd_video_to_db(self, mock_info, mock_db):
         """未在 DB 且解析度足夠的影片應以 INSERT IGNORE 加入 DB"""
@@ -170,7 +170,7 @@ class TestScanDirectoryFiltering(unittest.TestCase):
         self.assertEqual(len(insert_calls), 1)
         self.assertEqual(daemon.scan_progress['tasks_added'], 1)
 
-    @patch('daemons.scan_daemon.db_manager')
+    @patch('task_manager.db_manager')
     @patch('daemons.scan_daemon.get_video_info')
     def test_skips_already_in_db_pending(self, mock_info, mock_db):
         """DB 中已有 pending 記錄時，不應呼叫 ffprobe"""
@@ -180,7 +180,7 @@ class TestScanDirectoryFiltering(unittest.TestCase):
         daemon.scan_directory()
         mock_info.assert_not_called()
 
-    @patch('daemons.scan_daemon.db_manager')
+    @patch('task_manager.db_manager')
     @patch('daemons.scan_daemon.get_video_info')
     def test_skips_already_in_db_processing(self, mock_info, mock_db):
         """DB 中已有 processing 記錄時，不應呼叫 ffprobe"""
@@ -190,7 +190,7 @@ class TestScanDirectoryFiltering(unittest.TestCase):
         daemon.scan_directory()
         mock_info.assert_not_called()
 
-    @patch('daemons.scan_daemon.db_manager')
+    @patch('task_manager.db_manager')
     @patch('daemons.scan_daemon.get_video_info')
     def test_requeues_completed_with_missing_output(self, mock_info, mock_db):
         """DB 中 completed 但輸出檔不存在時，應重置為 pending"""
@@ -204,7 +204,7 @@ class TestScanDirectoryFiltering(unittest.TestCase):
                         if 'UPDATE' in str(c) and 'pending' in str(c)]
         self.assertGreater(len(update_calls), 0)
 
-    @patch('daemons.scan_daemon.db_manager')
+    @patch('task_manager.db_manager')
     @patch('daemons.scan_daemon.get_video_info')
     @patch('daemons.scan_daemon.get_video_duration')
     def test_skips_if_output_duration_matches(self, mock_dur, mock_info, mock_db):
@@ -220,7 +220,7 @@ class TestScanDirectoryFiltering(unittest.TestCase):
                         if 'INSERT' in str(c)]
         self.assertEqual(len(insert_calls), 0)
 
-    @patch('daemons.scan_daemon.db_manager')
+    @patch('task_manager.db_manager')
     @patch('daemons.scan_daemon.get_video_info')
     @patch('daemons.scan_daemon.get_video_duration')
     def test_requeues_if_output_too_short(self, mock_dur, mock_info, mock_db):
@@ -245,7 +245,7 @@ class TestScanDirectoryFiltering(unittest.TestCase):
                         if 'UPDATE' in str(c)]
         self.assertGreater(len(update_calls), 0)
 
-    @patch('daemons.scan_daemon.db_manager')
+    @patch('task_manager.db_manager')
     @patch('daemons.scan_daemon.get_video_info')
     def test_skips_output_duration_check_when_threshold_zero(self, mock_info, mock_db):
         """DURATION_THRESHOLD=0 時，輸出檔存在即略過，不呼叫 get_video_duration"""
@@ -275,13 +275,13 @@ class TestScanDirectoryFiltering(unittest.TestCase):
                     importlib.reload(sd_mod)
                     daemon = sd_mod.ScanDaemon(scan_interval=60)
                 with patch('daemons.scan_daemon.get_video_duration') as mock_dur, \
-                     patch('daemons.scan_daemon.db_manager') as mock_db2:
+                     patch('task_manager.db_manager') as mock_db2:
                     mock_db2.execute_query.return_value = []
                     daemon.scan_directory()
                     mock_dur.assert_not_called()
 
 
-    @patch('daemons.scan_daemon.db_manager')
+    @patch('task_manager.db_manager')
     @patch('daemons.scan_daemon.get_video_info')
     @patch('daemons.scan_daemon.get_video_duration')
     def test_inserts_if_output_too_short_and_no_db_record(self, mock_dur, mock_info, mock_db):
