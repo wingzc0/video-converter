@@ -110,19 +110,6 @@ class TaskRepository:
             self._logger.error(f"Error inserting task for {input_path}: {str(e)}")
             return 0
 
-
-        """回傳最近失敗任務清單"""
-        try:
-            query = """
-            SELECT id, input_path, error_message, retry_count, updated_at
-            FROM conversion_tasks WHERE status='failed'
-            ORDER BY updated_at DESC LIMIT %s
-            """
-            return db_manager.execute_query(query, (limit,), fetch=True)
-        except Exception as e:
-            self._logger.error(f"Error getting recent failed tasks: {str(e)}")
-            return []
-
     def get_maxed_failed_tasks(self, max_retries=3):
         """回傳 retry_count >= max_retries 的失敗任務清單"""
         try:
