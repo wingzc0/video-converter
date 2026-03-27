@@ -304,6 +304,12 @@ class TestResetTasksToPending(unittest.TestCase):
         mock_db.execute_query.side_effect = Exception('err')
         self.assertEqual(_repo().reset_tasks_to_pending([1, 2]), 0)
 
+    @patch('task_manager.db_manager')
+    def test_empty_list_returns_zero_without_query(self, mock_db):
+        result = _repo().reset_tasks_to_pending([])
+        self.assertEqual(result, 0)
+        mock_db.execute_query.assert_not_called()
+
 
 # ---------------------------------------------------------------------------
 # cleanup_orphaned_flags

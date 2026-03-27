@@ -323,6 +323,8 @@ class TaskRepository:
 
     def reset_tasks_to_pending(self, task_ids):
         """將指定 task_ids 重置為 pending（retry_count 歸零），回傳重置數量"""
+        if not task_ids:
+            return 0
         try:
             placeholders = ','.join(['%s'] * len(task_ids))
             db_manager.execute_query(
