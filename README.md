@@ -43,6 +43,16 @@ video-converter/
 │                              #   建立：conversion_tasks 表 + processing_lock 表
 │                              #   為 status、is_processing、時間戳等欄位建立索引
 │
+├── task_manager.py            # 任務資料庫操作的統一抽象層
+│                              #   TaskRepository 類別：封裝所有 conversion_tasks DB 操作
+│                              #   get_pending_tasks()、get_task_by_input_path()、get_task_statistics()
+│                              #   get_recent_failed_tasks()、get_maxed_failed_tasks()
+│                              #   update_task_status()、acquire/release_task_lock()
+│                              #   retry_failed_tasks()、cleanup_stale_tasks()
+│                              #   reset_tasks_to_pending()、cleanup_orphaned_flags()
+│                              #   requeue_missing_output()、insert_task()
+│                              #   所有 daemon 與 conv_admin 均透過此類別存取 DB，不直接呼叫 db_manager
+│
 ├── daemons/
 │   ├── __init__.py
 │   ├── base_daemon.py         # 所有 daemon 的抽象基礎類別（ABC）
@@ -59,6 +69,7 @@ video-converter/
 │   │                          #     3. output_path.exists()（單一 stat，跳過 ffprobe）
 │   │                          #     4. ffprobe 僅用於全新且無輸出的檔案
 │   │                          #   可設定掃描間隔（SCAN_INTERVAL，NFS 環境建議 1800 秒）
+│   │                          #   所有 DB 操作透過 TaskRepository（task_manager.py）
 │   │
 │   └── process_daemon.py      # 處理 Daemon（繼承 BaseDaemon）
 │                              #   執行緒池工作模式（預設：1 個工作執行緒，使用 queue.Queue）
@@ -74,13 +85,14 @@ video-converter/
 │                              #   更新任務狀態：pending → processing → completed/failed
 │                              #   自動重試失敗任務（每 RETRY_INTERVAL_CYCLES 次 check 執行一次）
 │                              #   自動清除過時任務（每次 check 都執行，閾值 STALE_HOURS）
+│                              #   所有 DB 操作透過 TaskRepository（task_manager.py）
 │
 ├── api/
 │   └── server.py              # Flask REST + WebSocket API 伺服器
 │                              #   讀取 daemon 的 JSON 狀態檔（含 60 秒過期檢查）
 │                              #   REST 端點：/api/health、/api/status、/api/progress/{scan,process,system,stats}
 │                              #   WebSocket：每 2 秒廣播 scan_progress、process_progress、system_status、task_stats
-│                              #   從資料庫查詢彙總任務統計資訊
+│                              #   任務統計透過 TaskRepository（task_manager.py）查詢
 │
 ├── monitor_daemons.py         # 終端機監控儀表板（CLI 工具）
 │                              #   輪詢 REST API 並以彩色 ASCII 格式呈現
@@ -396,6 +408,7 @@ journalctl -u video-api       -f
 
 - **掃描**（`scan_daemon.py`）：檔案探索與任務入列
 - **處理**（`process_daemon.py`）：多執行緒轉碼執行
+- **任務管理**（`task_manager.py`）：TaskRepository — 集中管理所有任務 DB 操作的單一入口
 - **持久化**（`db_manager.py` + MariaDB）：任務佇列與狀態追蹤
 - **可觀測性**（`api/server.py`）：REST API + WebSocket 即時推送
 - **監控**（`monitor_daemons.py`）：終端機儀表板
