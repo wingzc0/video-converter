@@ -338,12 +338,16 @@ class TestCleanupOrphanedFlags(unittest.TestCase):
         self.assertEqual(_repo().cleanup_orphaned_flags(), 0)
 
     @patch('task_manager.db_manager')
-    def test_query_targets_processing_with_is_processing(self, mock_db):
+    def test_query_resets_status_to_pending_and_clears_is_processing(self, mock_db):
         mock_db.execute_query.return_value = 0
         _repo().cleanup_orphaned_flags()
         query = mock_db.execute_query.call_args[0][0]
-        self.assertIn('is_processing', query)
-        self.assertIn('processing', query.lower())
+        # Must reset both columns so tasks re-enter the pending queue
+        self.assertIn("status = 'pending'", query)
+        self.assertIn("is_processing = FALSE", query)
+        # WHERE must target processing+is_processing=TRUE (orphaned state after crash)
+        self.assertIn("status = 'processing'", query)
+        self.assertIn("is_processing = TRUE", query)
 
     @patch('task_manager.db_manager')
     def test_db_error_returns_zero(self, mock_db):

@@ -339,10 +339,15 @@ class TaskRepository:
             return 0
 
     def cleanup_orphaned_flags(self):
-        """清理上次崩潰留下的孤兒 is_processing 旗標，回傳清理數量"""
+        """清理上次崩潰留下的孤兒 is_processing 旗標，回傳清理數量。
+
+        崩潰後任務狀態為 status='processing', is_processing=TRUE。
+        同時重設 status='pending' 以讓任務重新被排程，
+        否則任務會卡在 status='processing', is_processing=FALSE 的無人處理狀態。
+        """
         try:
             cleaned = db_manager.execute_query(
-                "UPDATE conversion_tasks SET is_processing = FALSE "
+                "UPDATE conversion_tasks SET is_processing = FALSE, status = 'pending' "
                 "WHERE status = 'processing' AND is_processing = TRUE"
             )
             return cleaned or 0
