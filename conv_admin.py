@@ -21,7 +21,7 @@ import argparse
 from pathlib import Path
 
 from task_manager import TaskRepository
-from converter import get_video_info
+from converter import get_video_info, compute_output_name
 from dotenv import load_dotenv
 
 load_dotenv()
@@ -210,10 +210,12 @@ def _get_process_daemon_descendant_pids():
 
 def cmd_kill_stale_ffmpeg(dry_run=False):
     try:
-        import psutil
+        import psutil  # noqa: F401 — verify psutil is available before proceeding
     except ImportError:
         print("psutil 未安裝，無法掃描 ffmpeg 程序。請執行: pip install psutil")
         return
+
+    from task_manager import find_orphaned_ffmpeg_candidates
 
     task_repo = TaskRepository()
     daemon_pids = _get_process_daemon_descendant_pids()
@@ -223,54 +225,19 @@ def cmd_kill_stale_ffmpeg(dry_run=False):
     else:
         print("Process daemon not running (or PID file not found); all ffmpeg processes are candidates.")
 
+    candidates = find_orphaned_ffmpeg_candidates(task_repo, daemon_pids)
     killed = 0
-    skipped = 0
 
-    for proc in psutil.process_iter(['pid', 'name', 'cmdline']):
-        try:
-            if proc.info['name'] != 'ffmpeg':
-                continue
-            if proc.pid in daemon_pids:
-                skipped += 1
-                continue
-
-            cmdline = proc.info['cmdline'] or []
-            input_path = None
-            for idx, arg in enumerate(cmdline):
-                if arg == '-i' and idx + 1 < len(cmdline):
-                    input_path = cmdline[idx + 1]
-                    break
-
-            if not input_path:
-                continue
-
-            task = task_repo.get_task_by_input_path(input_path)
-            if task is None:
-                continue
-
-            # Only kill if the task is in an active state; skip completed/failed
-            # to avoid killing unrelated ffmpeg processes using the same source file.
-            if task.get('status') not in ('pending', 'processing'):
-                continue
-
-            # Double-check status right before kill to close the TOCTOU window
-            # (task may have completed between the first check and now).
-            task = task_repo.get_task_by_input_path(input_path)
-            if task is None or task.get('status') not in ('pending', 'processing'):
-                continue
-
-            print(f"  {'[DRY-RUN] ' if dry_run else ''}Kill ffmpeg PID {proc.pid} "
-                  f"(task_id={task['id']}, status={task.get('status','?')}, "
-                  f"input={input_path})")
-            if not dry_run:
-                try:
-                    os.kill(proc.pid, signal.SIGKILL)
-                    killed += 1
-                except ProcessLookupError:
-                    print(f"    (already gone)")
-
-        except (psutil.NoSuchProcess, psutil.AccessDenied):
-            continue
+    for c in candidates:
+        print(f"  {'[DRY-RUN] ' if dry_run else ''}Kill ffmpeg PID {c['pid']} "
+              f"(task_id={c['task_id']}, status={c['status']}, "
+              f"input={c['input_path']})")
+        if not dry_run:
+            try:
+                os.kill(c['pid'], signal.SIGKILL)
+                killed += 1
+            except ProcessLookupError:
+                print(f"    (already gone)")
 
     if dry_run:
         print("Dry-run complete. Use without --dry-run to actually kill.")
@@ -279,8 +246,6 @@ def cmd_kill_stale_ffmpeg(dry_run=False):
             print("No orphaned ffmpeg processes found.")
         else:
             print(f"Killed {killed} orphaned ffmpeg process(es).")
-    if skipped:
-        print(f"Skipped {skipped} ffmpeg process(es) under process daemon.")
 
 # ---------------------------------------------------------------------------
 # Add specific file to conversion database
@@ -316,8 +281,7 @@ def cmd_add_file(file_paths):
             continue
 
         # Compute output path the same way scan_daemon does
-        orig_suffix = file_path.suffix[1:].lower()
-        out_name = f"480p_{file_path.stem}.mp4" if orig_suffix == "mp4" else f"480p_{file_path.stem}_{orig_suffix}.mp4"
+        out_name = compute_output_name(file_path)
         try:
             relative = file_path.relative_to(input_dir)
             out_path = output_dir / relative.parent / out_name

@@ -261,59 +261,22 @@ class ProcessDaemon(BaseDaemon):
         掃描系統中所有不在本 daemon 子孫樹下的 ffmpeg 程序，
         若其 -i 參數指向的 source file 存在於 DB 的任務中，則 kill 之。
         """
-        try:
-            import psutil
-        except ImportError:
-            return
+        from task_manager import find_orphaned_ffmpeg_candidates
 
         daemon_pids = self._get_daemon_descendant_pids()
+        candidates = find_orphaned_ffmpeg_candidates(self.task_repo, daemon_pids)
         killed = 0
 
-        for proc in psutil.process_iter(['pid', 'name', 'cmdline']):
+        for c in candidates:
+            self.logger.warning(
+                f"Killing orphaned ffmpeg PID {c['pid']} "
+                f"(task_id={c['task_id']}, status={c['status']}, input={c['input_path']})"
+            )
             try:
-                if proc.info['name'] != 'ffmpeg':
-                    continue
-                if proc.pid in daemon_pids:
-                    continue
-
-                cmdline = proc.info['cmdline'] or []
-                # 從 cmdline 找 -i 後的 input_path
-                input_path = None
-                for idx, arg in enumerate(cmdline):
-                    if arg == '-i' and idx + 1 < len(cmdline):
-                        input_path = cmdline[idx + 1]
-                        break
-
-                if not input_path:
-                    continue
-
-                task = self.task_repo.get_task_by_input_path(input_path)
-                if task is None:
-                    continue
-
-                # Only kill if the task is in an active state; skip completed/failed
-                # to avoid killing unrelated ffmpeg processes using the same source file.
-                if task.get('status') not in ('pending', 'processing'):
-                    continue
-
-                # Double-check status right before kill to close the TOCTOU window
-                # (task may have completed between the first check and now).
-                task = self.task_repo.get_task_by_input_path(input_path)
-                if task is None or task.get('status') not in ('pending', 'processing'):
-                    continue
-
-                self.logger.warning(
-                    f"Killing orphaned ffmpeg PID {proc.pid} "
-                    f"(task_id={task['id']}, status={task.get('status')}, input={input_path})"
-                )
-                try:
-                    os.kill(proc.pid, signal.SIGKILL)
-                    killed += 1
-                except ProcessLookupError:
-                    pass  # 程序已自行結束
-
-            except (psutil.NoSuchProcess, psutil.AccessDenied):
-                continue
+                os.kill(c['pid'], signal.SIGKILL)
+                killed += 1
+            except ProcessLookupError:
+                pass  # 程序已自行結束
 
         if killed:
             self.logger.warning(f"Killed {killed} orphaned ffmpeg process(es)")

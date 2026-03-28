@@ -2,7 +2,7 @@ import time
 import threading
 from datetime import datetime, timedelta
 from .base_daemon import BaseDaemon, _get_process_uptime
-from converter import get_video_info
+from converter import get_video_info, compute_output_name
 from task_manager import TaskRepository
 from pathlib import Path
 import os
@@ -111,16 +111,10 @@ class ScanDaemon(BaseDaemon):
                     # ── Step 2: 計算輸出路徑（純字串運算，無 NFS I/O）────────────────
                     # 一律使用 .mp4 副檔名：converter 輸出 H.264+AAC，
                     # 僅 MP4 容器能完全相容，mpg/mxf/avi 等容器會導致 mux 失敗。
-                    # 非 .mp4 輸入在 stem 後加原始副檔名，避免同名不同格式的路徑衝突
-                    # （例如 video.mpg 與 video.mp4 同時存在時）。
+                    # 非 .mp4 輸入加原始副檔名後綴，避免同名不同格式的路徑衝突。
                     relative_path = file_path.relative_to(self.base_input_dir)
                     output_dir = self.base_output_dir / relative_path.parent
-                    orig_suffix = file_path.suffix[1:].lower()
-                    if orig_suffix == "mp4":
-                        out_name = f"480p_{file_path.stem}.mp4"
-                    else:
-                        out_name = f"480p_{file_path.stem}_{orig_suffix}.mp4"
-                    output_path = output_dir / out_name
+                    output_path = output_dir / compute_output_name(file_path)
 
                     # ── Step 3: 輸出檔已存在則跳過（一次 stat，避免 ffprobe）────────
                     if output_path.exists():

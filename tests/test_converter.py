@@ -12,7 +12,7 @@ from unittest.mock import MagicMock, patch, call
 # 將專案根目錄加入 Python 路徑
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from converter import convert_to_480p, get_video_duration, get_video_info, parse_time_to_seconds
+from converter import convert_to_480p, get_video_duration, get_video_info, parse_time_to_seconds, compute_output_name
 
 
 class TestParseTimeToSeconds(unittest.TestCase):
@@ -249,6 +249,35 @@ class TestConvertTo480p(unittest.TestCase):
         )
         self.assertFalse(success)
         self.assertIn('stall', error.lower())
+
+
+class TestComputeOutputName(unittest.TestCase):
+    """compute_output_name() — 輸出檔名計算"""
+
+    def test_mp4_input_no_suffix(self):
+        self.assertEqual(compute_output_name(Path('/input/video.mp4')), '480p_video.mp4')
+
+    def test_mp4_uppercase_no_suffix(self):
+        self.assertEqual(compute_output_name(Path('/input/clip.MP4')), '480p_clip.mp4')
+
+    def test_mpg_adds_suffix(self):
+        self.assertEqual(compute_output_name(Path('/input/video.mpg')), '480p_video_mpg.mp4')
+
+    def test_mxf_adds_suffix(self):
+        self.assertEqual(compute_output_name(Path('/input/clip.MXF')), '480p_clip_mxf.mp4')
+
+    def test_avi_adds_suffix(self):
+        self.assertEqual(compute_output_name(Path('/input/movie.avi')), '480p_movie_avi.mp4')
+
+    def test_mkv_adds_suffix(self):
+        self.assertEqual(compute_output_name(Path('/input/show.mkv')), '480p_show_mkv.mp4')
+
+    def test_no_collision_between_mpg_and_mp4(self):
+        """video.mpg と video.mp4 は異なる出力名を持つこと"""
+        self.assertNotEqual(
+            compute_output_name(Path('/input/video.mpg')),
+            compute_output_name(Path('/input/video.mp4')),
+        )
 
 
 if __name__ == '__main__':

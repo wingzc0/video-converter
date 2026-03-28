@@ -37,6 +37,22 @@ def get_video_info(input_path):
         print(f"Error getting video info: {e}")
         return None
 
+
+def compute_output_name(file_path):
+    """輸出檔名計算（僅檔名，不含目錄路徑）。
+
+    規則：
+    - .mp4 輸入：480p_{stem}.mp4          （e.g. video.mp4 → 480p_video.mp4）
+    - 其他格式：480p_{stem}_{ext}.mp4     （e.g. video.mpg → 480p_video_mpg.mp4）
+
+    非 .mp4 輸入加入原始副檔名後綴，避免同目錄下相同 stem 不同格式的輸出路徑衝突。
+    """
+    p = Path(file_path)
+    orig_suffix = p.suffix[1:].lower()
+    if orig_suffix == "mp4":
+        return f"480p_{p.stem}.mp4"
+    return f"480p_{p.stem}_{orig_suffix}.mp4"
+
 def convert_to_480p(input_path, output_path, progress_callback=None,
                     ffmpeg_timeout=None, ffmpeg_stall_timeout=None):
     """使用FFmpeg將影片轉換為480p，支援進度回調與超時保護

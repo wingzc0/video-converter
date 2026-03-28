@@ -351,3 +351,61 @@ class TaskRepository:
         except Exception as e:
             self._logger.error(f"Error cleaning up orphaned flags: {str(e)}")
             return 0
+
+
+_ACTIVE_STATUSES = ('pending', 'processing')
+
+
+def find_orphaned_ffmpeg_candidates(task_repo, excluded_pids):
+    """掃描系統中的 ffmpeg 程序，找出應被 kill 的孤兒程序候選清單。
+
+    條件：
+    - 不在 excluded_pids（即非 process daemon 的子孫程序）
+    - -i 參數指向的 source file 在 DB 中有 pending/processing 的任務
+    - 含 TOCTOU 雙重查詢防護（確認 kill 前 status 仍為 active）
+
+    回傳 list of dict：{'pid', 'task_id', 'status', 'input_path'}
+    若 psutil 未安裝則回傳空 list。
+    """
+    try:
+        import psutil
+    except ImportError:
+        return []
+
+    candidates = []
+    for proc in psutil.process_iter(['pid', 'name', 'cmdline']):
+        try:
+            if proc.info['name'] != 'ffmpeg':
+                continue
+            if proc.pid in excluded_pids:
+                continue
+
+            cmdline = proc.info['cmdline'] or []
+            input_path = None
+            for idx, arg in enumerate(cmdline):
+                if arg == '-i' and idx + 1 < len(cmdline):
+                    input_path = cmdline[idx + 1]
+                    break
+
+            if not input_path:
+                continue
+
+            task = task_repo.get_task_by_input_path(input_path)
+            if task is None or task.get('status') not in _ACTIVE_STATUSES:
+                continue
+
+            # Double-check status to close the TOCTOU window
+            task = task_repo.get_task_by_input_path(input_path)
+            if task is None or task.get('status') not in _ACTIVE_STATUSES:
+                continue
+
+            candidates.append({
+                'pid': proc.pid,
+                'task_id': task['id'],
+                'status': task.get('status'),
+                'input_path': input_path,
+            })
+        except (psutil.NoSuchProcess, psutil.AccessDenied):
+            continue
+
+    return candidates

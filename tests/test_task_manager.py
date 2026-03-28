@@ -9,7 +9,7 @@ from unittest.mock import patch, MagicMock
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from task_manager import TaskRepository
+from task_manager import TaskRepository, find_orphaned_ffmpeg_candidates
 
 
 def _repo():
@@ -349,6 +349,75 @@ class TestCleanupOrphanedFlags(unittest.TestCase):
     def test_db_error_returns_zero(self, mock_db):
         mock_db.execute_query.side_effect = Exception('err')
         self.assertEqual(_repo().cleanup_orphaned_flags(), 0)
+
+
+# ---------------------------------------------------------------------------
+# find_orphaned_ffmpeg_candidates (module-level function)
+# ---------------------------------------------------------------------------
+
+class TestFindOrphanedFfmpegCandidates(unittest.TestCase):
+
+    def _make_proc(self, pid, cmdline):
+        p = MagicMock()
+        p.pid = pid
+        p.info = {'name': 'ffmpeg', 'cmdline': cmdline}
+        return p
+
+    @patch('task_manager.db_manager')
+    @patch('task_manager.find_orphaned_ffmpeg_candidates.__module__')
+    def test_returns_candidate_for_active_task(self, _mod, mock_db):
+        """pending/processing タスクのfmpeg → candidate に含まれる"""
+        import sys
+        import types
+        # psutil mock
+        psutil_mock = types.ModuleType('psutil')
+        proc = self._make_proc(1234, ['ffmpeg', '-i', '/videos/foo.mp4', '/out/foo.mp4'])
+        psutil_mock.process_iter = MagicMock(return_value=[proc])
+        psutil_mock.NoSuchProcess = Exception
+        psutil_mock.AccessDenied = Exception
+        mock_db.execute_query.return_value = [{'id': 7, 'status': 'processing', 'output_path': '/out/foo.mp4'}]
+        with patch.dict(sys.modules, {'psutil': psutil_mock}):
+            result = find_orphaned_ffmpeg_candidates(_repo(), excluded_pids=set())
+        self.assertEqual(len(result), 1)
+        self.assertEqual(result[0]['pid'], 1234)
+        self.assertEqual(result[0]['task_id'], 7)
+
+    @patch('task_manager.db_manager')
+    def test_excludes_pids_in_excluded_set(self, mock_db):
+        """excluded_pids に含まれる PID はスキップ"""
+        import sys
+        import types
+        psutil_mock = types.ModuleType('psutil')
+        proc = self._make_proc(5555, ['ffmpeg', '-i', '/v/a.mp4', '/out/a.mp4'])
+        psutil_mock.process_iter = MagicMock(return_value=[proc])
+        psutil_mock.NoSuchProcess = Exception
+        psutil_mock.AccessDenied = Exception
+        with patch.dict(sys.modules, {'psutil': psutil_mock}):
+            result = find_orphaned_ffmpeg_candidates(_repo(), excluded_pids={5555})
+        self.assertEqual(result, [])
+        mock_db.execute_query.assert_not_called()
+
+    @patch('task_manager.db_manager')
+    def test_skips_completed_task(self, mock_db):
+        """status=completed のタスク → candidate に含まれない"""
+        import sys
+        import types
+        psutil_mock = types.ModuleType('psutil')
+        proc = self._make_proc(2222, ['ffmpeg', '-i', '/v/done.mp4', '/out/done.mp4'])
+        psutil_mock.process_iter = MagicMock(return_value=[proc])
+        psutil_mock.NoSuchProcess = Exception
+        psutil_mock.AccessDenied = Exception
+        mock_db.execute_query.return_value = [{'id': 3, 'status': 'completed', 'output_path': '/out/done.mp4'}]
+        with patch.dict(sys.modules, {'psutil': psutil_mock}):
+            result = find_orphaned_ffmpeg_candidates(_repo(), excluded_pids=set())
+        self.assertEqual(result, [])
+
+    def test_returns_empty_if_psutil_missing(self):
+        """psutil 未インストールの場合は空リストを返す"""
+        import sys
+        with patch.dict(sys.modules, {'psutil': None}):
+            result = find_orphaned_ffmpeg_candidates(_repo(), excluded_pids=set())
+        self.assertEqual(result, [])
 
 
 if __name__ == '__main__':
