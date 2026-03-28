@@ -502,14 +502,18 @@ class TestCleanupStaleTasksCoalesce(unittest.TestCase):
         d = _make_process_daemon()
         mock_db.execute_query.side_effect = [
             [{'id': 42}],  # SELECT 回傳 1 筆
-            1,             # UPDATE
-            1,             # DELETE processing_lock
         ]
+        mock_db.execute_transaction.return_value = True
         result = d.cleanup_stale_tasks()
         self.assertEqual(result, 1)
-        update_query = mock_db.execute_query.call_args_list[1][0][0]
+        queries = mock_db.execute_transaction.call_args[0][0]
+        self.assertEqual(len(queries), 2)
+        update_query = queries[0][0]
         self.assertIn('failed', update_query.lower())
-        delete_query = mock_db.execute_query.call_args_list[2][0][0]
+        # Must guard against TOCTOU: only update if still processing
+        self.assertIn("status = 'processing'", update_query)
+        self.assertIn("is_processing = TRUE", update_query)
+        delete_query = queries[1][0]
         self.assertIn('processing_lock', delete_query.lower())
 
 

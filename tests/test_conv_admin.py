@@ -78,6 +78,7 @@ class TestCmdCleanupStale(unittest.TestCase):
         with patch('task_manager.db_manager') as mock_db, \
              patch('builtins.print'):
             mock_db.execute_query.return_value = tasks
+            mock_db.execute_transaction.return_value = True
             from conv_admin import cmd_cleanup_stale
             cmd_cleanup_stale(hours=hours)
             return mock_db
@@ -86,6 +87,7 @@ class TestCmdCleanupStale(unittest.TestCase):
         """無過時任務時不應呼叫 UPDATE"""
         mock_db = self._run(tasks=[])
         self.assertEqual(mock_db.execute_query.call_count, 1)
+        self.assertEqual(mock_db.execute_transaction.call_count, 0)
 
     def test_select_uses_coalesce(self):
         """SELECT 查詢應使用 COALESCE(start_time, updated_at, created_at)"""
@@ -100,14 +102,18 @@ class TestCmdCleanupStale(unittest.TestCase):
             self.assertIn('updated_at', select_query)
 
     def test_stale_tasks_are_updated_and_lock_deleted(self):
-        """每個過時任務應觸發 UPDATE + DELETE processing_lock"""
+        """每個過時任務應觸發原子性 UPDATE + DELETE processing_lock"""
         tasks = [{'id': 7}, {'id': 8}]
         mock_db = self._run(tasks=tasks)
-        # 1 SELECT + 2*(UPDATE + DELETE) = 5 calls
-        self.assertEqual(mock_db.execute_query.call_count, 5)
-        # 確認 UPDATE 將 status 設為 failed
-        update_query = mock_db.execute_query.call_args_list[1][0][0]
+        # 1 SELECT + 2 execute_transaction calls
+        self.assertEqual(mock_db.execute_query.call_count, 1)
+        self.assertEqual(mock_db.execute_transaction.call_count, 2)
+        # 確認 UPDATE 將 status 設為 failed 且含 TOCTOU 防護
+        queries = mock_db.execute_transaction.call_args_list[0][0][0]
+        update_query = queries[0][0]
         self.assertIn('failed', update_query.lower())
+        self.assertIn("status = 'processing'", update_query)
+        self.assertIn("is_processing = TRUE", update_query)
 
 
 class TestCmdKillStaleFfmpeg(unittest.TestCase):
