@@ -342,9 +342,9 @@ def parse_arguments():
   python3 conv_admin.py --reset-maxed-failed --max-retries 5
   python3 conv_admin.py --reset-task 123 456 789
   python3 conv_admin.py --reset-task 123 456 789 --dry-run
-  python3 conv_admin.py --add-file /BCVNAS/path/to/video.mp4
-  python3 conv_admin.py --add-file /BCVNAS/a.mp4 /BCVNAS/b.mkv
-  python3 conv_admin.py --add-file /BCVNAS/a.mp4 --dry-run
+  python3 conv_admin.py --add-file /mnt/nas/path/to/video.mp4
+  python3 conv_admin.py --add-file /mnt/nas/a.mp4 /mnt/nas/b.mkv
+  python3 conv_admin.py --add-file /mnt/nas/a.mp4 --dry-run
   python3 conv_admin.py --kill-stale-ffmpeg --dry-run
   python3 conv_admin.py --kill-stale-ffmpeg
 """
