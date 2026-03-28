@@ -31,7 +31,12 @@ load_dotenv()
 # ---------------------------------------------------------------------------
 
 def cmd_show_dirs():
-    input_dir  = Path(os.getenv('INPUT_DIRECTORY', '')).resolve()
+    """印出 INPUT_DIRECTORY 的目錄結構預覽（深度最多 3 層），並標示忽略目錄與影片檔。
+
+    每個檔案標記為 [CONVERTED]（480p_ 前綴）、[VIDEO]（支援的副檔名）或 [OTHER]。
+    IGNORE_DIRECTORIES 中的目錄以 [IGNORED] 標記並停止展開。
+    每層最多顯示 3 個子目錄、5 個檔案，超過時印出 "... (N more)"。
+    """
     output_dir = Path(os.getenv('OUTPUT_DIRECTORY', '')).resolve()
     ignore_raw = os.getenv('IGNORE_DIRECTORIES', '')
     ignore_dirs = [Path(d.strip()).resolve() for d in ignore_raw.split(',') if d.strip()]
@@ -124,7 +129,11 @@ def cmd_stats():
 # ---------------------------------------------------------------------------
 
 def cmd_retry_failed(max_retries=3):
-    task_repo = TaskRepository()
+    """將 retry_count < max_retries 的 failed 任務重設為 pending 以供重試。
+
+    Args:
+        max_retries: retry_count 達到此值的任務視為永久失敗，不會被重試（預設 3）。
+    """
     count = task_repo.retry_failed_tasks(max_retries=max_retries)
     if count == 0:
         print("No failed tasks eligible for retry.")
@@ -132,6 +141,14 @@ def cmd_retry_failed(max_retries=3):
         print(f"Retried {count} task(s) (max_retries={max_retries}).")
 
 def cmd_reset_maxed_failed(max_retries=3):
+    """列出 retry_count >= max_retries 的 failed 任務，經互動確認後強制重設為 pending。
+
+    Args:
+        max_retries: 重試次數門檻（預設 3）。
+
+    與 cmd_retry_failed 的差異：此函式用於手動解除「永久失敗」鎖定，
+    需要使用者輸入 'y' 確認，並以 reason='reset-maxed-failed' 寫入 error_message。
+    """
     task_repo = TaskRepository()
     tasks = task_repo.get_maxed_failed_tasks(max_retries)
     if not tasks:
@@ -183,6 +200,12 @@ def cmd_reset_task(task_ids, dry_run=False):
 
 
 def cmd_cleanup_stale(hours=24):
+    """將卡在 processing 狀態超過指定時數的任務重設為 pending。
+
+    Args:
+        hours: 判定為 stale 的閒置時數門檻（預設 24）。
+               注意：process_daemon 的 --stale-hours 預設為 1，兩者獨立設定。
+    """
     task_repo = TaskRepository()
     count = task_repo.cleanup_stale_tasks(stale_hours=hours)
     if count == 0:
@@ -221,6 +244,17 @@ def _get_process_daemon_descendant_pids():
 
 
 def cmd_kill_stale_ffmpeg(dry_run=False):
+    """掃描系統中的孤兒 ffmpeg 程序並以 SIGKILL 終止。
+
+    「孤兒程序」定義：ffmpeg PID 不在 process daemon 的子孫樹中，
+    且其 -i 參數指向的輸入檔在 DB 中有 pending/processing 的任務。
+
+    Args:
+        dry_run: 若為 True，僅列出候選程序，不實際 kill。
+
+    需要 psutil；若未安裝則印出提示並返回。
+    process daemon 的子孫 PID 自動排除，避免誤殺正在運作的轉檔程序。
+    """
     try:
         import psutil  # noqa: F401 — verify psutil is available before proceeding
     except ImportError:

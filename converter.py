@@ -6,7 +6,15 @@ from pathlib import Path
 import time
 
 def get_video_info(input_path):
-    """獲取影片資訊，包括解析度"""
+    """以 ffprobe 取得影片的第一個視訊串流解析度。
+
+    Args:
+        input_path: 影片檔案路徑（字串）。
+
+    Returns:
+        dict|None: 成功時回傳 {'width': int, 'height': int, 'resolution': 'WxH'}；
+                   找不到視訊串流、width/height 為 None、或發生錯誤時回傳 None。
+    """
     cmd = [
         'ffprobe',
         '-v', 'quiet',
@@ -55,11 +63,18 @@ def compute_output_name(file_path):
 
 def convert_to_480p(input_path, output_path, progress_callback=None,
                     ffmpeg_timeout=None, ffmpeg_stall_timeout=None):
-    """使用FFmpeg將影片轉換為480p，支援進度回調與超時保護
+    """使用 ffmpeg 將影片轉換為 480p H.264/AAC，支援進度回調與超時保護。
 
     Args:
-        ffmpeg_timeout: 整體轉檔絕對上限（秒）。None 表示不限制。
+        input_path:          輸入影片路徑（字串）。
+        output_path:         輸出 .mp4 路徑（字串）；已存在時以 -y 覆蓋。
+        progress_callback:   可選回調 `f(progress: float)`，progress 範圍 0–99.9；
+                             100% 由 process_task 在確認輸出檔存在後才設定。
+        ffmpeg_timeout:      整體轉檔絕對上限（秒）。None 表示不限制。
         ffmpeg_stall_timeout: 多久未收到 ffmpeg 進度輸出即視為停頓（秒）。None 表示不限制。
+
+    Returns:
+        tuple[bool, str|None]: 成功時 (True, None)；失敗時 (False, 錯誤原因字串)。
     """
     # FFmpeg命令：自動縮放至480p並保持比例
     cmd = [

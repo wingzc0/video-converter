@@ -68,7 +68,23 @@ class DatabaseManager:
                 cursor.close()
     
     def execute_query(self, query, params=None, fetch=False):
-        """執行查詢"""
+        """執行單一 SQL 語句並自動 commit。
+
+        Args:
+            query:  SQL 語句，參數使用 %s 佔位符。
+            params: 參數元組（可選）。
+            fetch:  True → SELECT 查詢，回傳結果列表；
+                    False → INSERT/UPDATE/DELETE，回傳受影響行數（int）。
+
+        Returns:
+            list[dict] | int: fetch=True 時回傳 fetchall() 結果（dict 列表）；
+                              fetch=False 時回傳 cursor.rowcount。
+
+        Note:
+            此方法不得用於 SELECT FOR UPDATE：每次呼叫都會立即 commit，
+            行鎖會在 commit 後釋放，無法保護後續的寫入操作。
+            跨語句原子操作請改用 execute_transaction()。
+        """
         with self.get_cursor(dictionary=True) as (cursor, conn):
             try:
                 cursor.execute(query, params or ())
