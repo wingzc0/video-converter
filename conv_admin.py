@@ -149,6 +149,14 @@ def cmd_reset_maxed_failed(max_retries=3):
 
 
 def cmd_reset_task(task_ids, dry_run=False):
+    """將指定的 task ID 重設為 pending（retry_count 歸零、清除錯誤訊息）。
+
+    Args:
+        task_ids: 要重設的任務 ID 清單（整數）。
+        dry_run:  若為 True，僅顯示會被重設的任務，不實際寫入 DB。
+
+    不存在的 ID 會被跳過並印出警告。所有有效 ID 以單一 UPDATE 批次處理。
+    """
     task_repo = TaskRepository()
     found = []
     for tid in task_ids:
@@ -256,6 +264,21 @@ def cmd_kill_stale_ffmpeg(dry_run=False):
 # ---------------------------------------------------------------------------
 
 def cmd_add_file(file_paths, dry_run=False):
+    """手動將指定的影片檔新增至轉檔資料庫，功能等同於 scan_daemon 掃描。
+
+    Args:
+        file_paths: 要新增的影片檔路徑清單（字串）。
+        dry_run:    若為 True，僅顯示會新增的檔案與輸出路徑，不實際寫入 DB。
+
+    驗證流程（任一失敗即跳過該檔案）：
+      1. 檔案存在且為一般檔案
+      2. 副檔名在 SUPPORTED_EXTENSIONS 清單中
+      3. ffprobe 可成功取得解析度資訊
+
+    輸出路徑計算與 scan_daemon 相同（使用 compute_output_name()）。
+    若檔案在 INPUT_DIRECTORY 之外，輸出路徑放在輸入檔同目錄下。
+    使用 INSERT IGNORE — 若 DB 中已有相同 input_path 則跳過並顯示現有狀態。
+    """
     input_dir  = Path(os.getenv('INPUT_DIRECTORY', '')).resolve()
     output_dir = Path(os.getenv('OUTPUT_DIRECTORY', '')).resolve()
     supported  = set(e.strip().lower() for e in
