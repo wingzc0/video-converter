@@ -37,6 +37,7 @@ def cmd_show_dirs():
     IGNORE_DIRECTORIES 中的目錄以 [IGNORED] 標記並停止展開。
     每層最多顯示 3 個子目錄、5 個檔案，超過時印出 "... (N more)"。
     """
+    input_dir  = Path(os.getenv('INPUT_DIRECTORY', '')).resolve()
     output_dir = Path(os.getenv('OUTPUT_DIRECTORY', '')).resolve()
     ignore_raw = os.getenv('IGNORE_DIRECTORIES', '')
     ignore_dirs = [Path(d.strip()).resolve() for d in ignore_raw.split(',') if d.strip()]
@@ -134,6 +135,7 @@ def cmd_retry_failed(max_retries=3):
     Args:
         max_retries: retry_count 達到此值的任務視為永久失敗，不會被重試（預設 3）。
     """
+    task_repo = TaskRepository()
     count = task_repo.retry_failed_tasks(max_retries=max_retries)
     if count == 0:
         print("No failed tasks eligible for retry.")
