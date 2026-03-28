@@ -343,7 +343,7 @@ class TaskRepository:
         try:
             cleaned = db_manager.execute_query(
                 "UPDATE conversion_tasks SET is_processing = FALSE "
-                "WHERE status = 'pending' AND is_processing = TRUE"
+                "WHERE status = 'processing' AND is_processing = TRUE"
             )
             return cleaned or 0
         except Exception as e:

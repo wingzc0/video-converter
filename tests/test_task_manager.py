@@ -338,12 +338,12 @@ class TestCleanupOrphanedFlags(unittest.TestCase):
         self.assertEqual(_repo().cleanup_orphaned_flags(), 0)
 
     @patch('task_manager.db_manager')
-    def test_query_targets_pending_with_is_processing(self, mock_db):
+    def test_query_targets_processing_with_is_processing(self, mock_db):
         mock_db.execute_query.return_value = 0
         _repo().cleanup_orphaned_flags()
         query = mock_db.execute_query.call_args[0][0]
         self.assertIn('is_processing', query)
-        self.assertIn('pending', query.lower())
+        self.assertIn('processing', query.lower())
 
     @patch('task_manager.db_manager')
     def test_db_error_returns_zero(self, mock_db):
