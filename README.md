@@ -318,7 +318,7 @@ python monitor_daemons.py -c
 | `--cleanup-stale` | 手動將卡住的 processing 任務標為 failed |
 | `--stale-hours N` | 過時閾值（小時，預設 24，搭配 --cleanup-stale 使用） |
 | `--kill-stale-ffmpeg` | Kill 不在 process daemon 子孫樹下且 source file 有 DB 記錄的孤兒 ffmpeg 程序 |
-| `--dry-run` | 僅列出會被 kill 的程序，不實際執行（搭配 --kill-stale-ffmpeg 使用） |
+| `--dry-run` | 僅顯示會執行的操作，不實際寫入（支援 `--kill-stale-ffmpeg`、`--reset-task`、`--add-file`） |
 | `--reset-task ID [ID ...]` | 將指定任務重設為 pending（retry_count 歸零、清除錯誤訊息） |
 | `--add-file FILE [FILE ...]` | 手動將指定影片檔加入轉檔佇列（跳過掃描 daemon） |
 
@@ -349,10 +349,12 @@ python3 conv_admin.py --kill-stale-ffmpeg
 # 重設特定任務為 pending（適用於手動修正特定失敗任務）
 python3 conv_admin.py --reset-task 42
 python3 conv_admin.py --reset-task 42 43 44
+python3 conv_admin.py --reset-task 42 43 44 --dry-run
 
 # 手動將影片檔加入佇列（適用於 scan daemon 尚未掃描到的檔案）
 python3 conv_admin.py --add-file /path/to/video.mp4
 python3 conv_admin.py --add-file /path/to/video1.mp4 /path/to/video2.mkv
+python3 conv_admin.py --add-file /path/to/video.mp4 --dry-run
 ```
 
 ---

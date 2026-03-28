@@ -148,7 +148,7 @@ def cmd_reset_maxed_failed(max_retries=3):
     print(f"Reset {len(tasks)} task(s) to pending.")
 
 
-def cmd_reset_task(task_ids):
+def cmd_reset_task(task_ids, dry_run=False):
     task_repo = TaskRepository()
     found = []
     for tid in task_ids:
@@ -164,6 +164,10 @@ def cmd_reset_task(task_ids):
 
     if not found:
         print("No valid task IDs to reset.")
+        return
+
+    if dry_run:
+        print(f"\nDry-run: would reset {len(found)} task(s) to pending (retry_count=0).")
         return
 
     count = task_repo.reset_tasks_to_pending(found, reason='manual reset via --reset-task')
@@ -251,7 +255,7 @@ def cmd_kill_stale_ffmpeg(dry_run=False):
 # Add specific file to conversion database
 # ---------------------------------------------------------------------------
 
-def cmd_add_file(file_paths):
+def cmd_add_file(file_paths, dry_run=False):
     input_dir  = Path(os.getenv('INPUT_DIRECTORY', '')).resolve()
     output_dir = Path(os.getenv('OUTPUT_DIRECTORY', '')).resolve()
     supported  = set(e.strip().lower() for e in
@@ -296,6 +300,12 @@ def cmd_add_file(file_paths):
             skipped += 1
             continue
 
+        if dry_run:
+            print(f"  [DRY-RUN] Would add [{video_info['resolution']}] {file_path.name}")
+            print(f"             → {out_path}")
+            added += 1
+            continue
+
         rows = task_repo.insert_task(str(file_path), str(out_path), video_info['resolution'])
         if rows > 0:
             print(f"  ✅ Added  [{video_info['resolution']}] {file_path.name}")
@@ -308,7 +318,10 @@ def cmd_add_file(file_paths):
             print(f"  ⚠ Already in DB (status={status}): {file_path.name}")
             skipped += 1
 
-    print(f"\nDone. Added {added}, skipped {skipped}.")
+    if dry_run:
+        print(f"\nDry-run: would add {added} file(s), {skipped} skipped.")
+    else:
+        print(f"\nDone. Added {added}, skipped {skipped}.")
 
 
 # ---------------------------------------------------------------------------
@@ -328,8 +341,10 @@ def parse_arguments():
   python3 conv_admin.py --reset-maxed-failed
   python3 conv_admin.py --reset-maxed-failed --max-retries 5
   python3 conv_admin.py --reset-task 123 456 789
+  python3 conv_admin.py --reset-task 123 456 789 --dry-run
   python3 conv_admin.py --add-file /BCVNAS/path/to/video.mp4
   python3 conv_admin.py --add-file /BCVNAS/a.mp4 /BCVNAS/b.mkv
+  python3 conv_admin.py --add-file /BCVNAS/a.mp4 --dry-run
   python3 conv_admin.py --kill-stale-ffmpeg --dry-run
   python3 conv_admin.py --kill-stale-ffmpeg
 """
@@ -352,7 +367,7 @@ def parse_arguments():
     parser.add_argument('--max-retries', type=int, default=3,
                         help='最大重試次數（預設 3，僅用於 --retry-failed）')
     parser.add_argument('--dry-run', action='store_true',
-                        help='僅列出會被 kill 的程序，不實際執行（僅用於 --kill-stale-ffmpeg）')
+                        help='僅顯示會執行的操作，不實際寫入（支援 --kill-stale-ffmpeg、--reset-task、--add-file）')
     return parser.parse_args()
 
 
@@ -370,9 +385,9 @@ def main():
     elif args.reset_maxed_failed:
         cmd_reset_maxed_failed(args.max_retries)
     elif args.reset_task:
-        cmd_reset_task(args.reset_task)
+        cmd_reset_task(args.reset_task, dry_run=args.dry_run)
     elif args.add_file:
-        cmd_add_file(args.add_file)
+        cmd_add_file(args.add_file, dry_run=args.dry_run)
     elif args.kill_stale_ffmpeg:
         cmd_kill_stale_ffmpeg(dry_run=args.dry_run)
 

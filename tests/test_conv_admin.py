@@ -386,5 +386,88 @@ class TestCmdAddFile(unittest.TestCase):
             shutil.rmtree(other_dir, ignore_errors=True)
 
 
+class TestDryRunResetTask(unittest.TestCase):
+    """cmd_reset_task() --dry-run — 顯示會重設的任務但不寫入 DB"""
+
+    @patch('task_manager.db_manager')
+    def test_dry_run_does_not_update_db(self, mock_db):
+        """dry_run=True 時不應執行 UPDATE"""
+        mock_db.execute_query.side_effect = [
+            [{'id': 42, 'input_path': '/a.mp4', 'output_path': '/out/a.mp4',
+              'status': 'failed', 'retry_count': 3, 'error_message': 'timeout'}],
+        ]
+        with patch('builtins.print'):
+            from conv_admin import cmd_reset_task
+            cmd_reset_task([42], dry_run=True)
+        update_calls = [c for c in mock_db.execute_query.call_args_list
+                        if 'UPDATE' in str(c)]
+        self.assertEqual(len(update_calls), 0)
+
+    @patch('task_manager.db_manager')
+    def test_dry_run_prints_would_reset(self, mock_db):
+        """dry_run=True 時應印出 Dry-run 提示與數量"""
+        mock_db.execute_query.return_value = [
+            {'id': 5, 'input_path': '/v.mp4', 'output_path': '/out/v.mp4',
+             'status': 'failed', 'retry_count': 1, 'error_message': None}
+        ]
+        printed = []
+        with patch('builtins.print', side_effect=lambda *a, **kw: printed.append(' '.join(str(x) for x in a))):
+            from conv_admin import cmd_reset_task
+            cmd_reset_task([5], dry_run=True)
+        self.assertTrue(any('Dry-run' in line for line in printed))
+
+
+class TestDryRunAddFile(unittest.TestCase):
+    """cmd_add_file() --dry-run — 顯示會新增的檔案但不寫入 DB"""
+
+    def setUp(self):
+        import tempfile
+        self.tmp = Path(tempfile.mkdtemp())
+        self.video = self.tmp / 'test.mp4'
+        self.video.touch()
+
+    def tearDown(self):
+        import shutil
+        shutil.rmtree(self.tmp, ignore_errors=True)
+
+    @patch('task_manager.db_manager')
+    @patch('conv_admin.get_video_info')
+    def test_dry_run_does_not_insert(self, mock_info, mock_db):
+        """dry_run=True 時不應執行 INSERT"""
+        mock_info.return_value = {'resolution': '1920x1080', 'width': 1920, 'height': 1080}
+        with patch('builtins.print'), \
+             patch.dict('os.environ', {'INPUT_DIRECTORY': str(self.tmp),
+                                       'OUTPUT_DIRECTORY': str(self.tmp / 'out')}):
+            from conv_admin import cmd_add_file
+            cmd_add_file([str(self.video)], dry_run=True)
+        insert_calls = [c for c in mock_db.execute_query.call_args_list
+                        if 'INSERT' in str(c)]
+        self.assertEqual(len(insert_calls), 0)
+
+    @patch('task_manager.db_manager')
+    @patch('conv_admin.get_video_info')
+    def test_dry_run_prints_would_add(self, mock_info, mock_db):
+        """dry_run=True 時應印出 DRY-RUN 提示與輸出路徑"""
+        mock_info.return_value = {'resolution': '1280x720', 'width': 1280, 'height': 720}
+        printed = []
+        with patch('builtins.print', side_effect=lambda *a, **kw: printed.append(' '.join(str(x) for x in a))), \
+             patch.dict('os.environ', {'INPUT_DIRECTORY': str(self.tmp),
+                                       'OUTPUT_DIRECTORY': str(self.tmp / 'out')}):
+            from conv_admin import cmd_add_file
+            cmd_add_file([str(self.video)], dry_run=True)
+        self.assertTrue(any('DRY-RUN' in line for line in printed))
+        self.assertTrue(any('480p_test.mp4' in line for line in printed))
+
+    @patch('conv_admin.get_video_info')
+    def test_dry_run_skips_missing_file(self, mock_info):
+        """不存在的檔案在 dry-run 模式下亦應被跳過"""
+        with patch('builtins.print'), \
+             patch.dict('os.environ', {'INPUT_DIRECTORY': str(self.tmp),
+                                       'OUTPUT_DIRECTORY': str(self.tmp / 'out')}):
+            from conv_admin import cmd_add_file
+            cmd_add_file(['/nonexistent/video.mp4'], dry_run=True)
+        mock_info.assert_not_called()
+
+
 if __name__ == '__main__':
     unittest.main()
