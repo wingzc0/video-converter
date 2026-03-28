@@ -327,7 +327,6 @@ class BaseDaemon(ABC):
         self.is_running = False
         if self.daemon_context:
             self.daemon_context.terminate(signal.SIGTERM, frame)
-        sys.exit(0)
     
     def check_pid_file(self):
         """檢查 PID 檔案是否存在，若存在則確認程序是否仍在執行。

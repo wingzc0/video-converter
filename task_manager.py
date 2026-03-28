@@ -210,7 +210,7 @@ class TaskRepository:
         try:
             rows_affected = db_manager.execute_query(
                 '''UPDATE conversion_tasks
-                   SET is_processing = TRUE, start_time = CURRENT_TIMESTAMP
+                   SET is_processing = TRUE, status = 'processing', start_time = CURRENT_TIMESTAMP
                    WHERE id = %s AND status = 'pending' AND is_processing = FALSE''',
                 (task_id,)
             )
@@ -230,14 +230,12 @@ class TaskRepository:
             return False
 
     def release_task_lock(self, task_id, worker_id):
-        """釋放任務鎖：清除 is_processing 旗標並移除 processing_lock 紀錄"""
+        """釋放任務鎖：原子性清除 is_processing 旗標並移除 processing_lock 紀錄"""
         try:
-            db_manager.execute_query(
-                "UPDATE conversion_tasks SET is_processing = FALSE WHERE id = %s", (task_id,)
-            )
-            db_manager.execute_query(
-                "DELETE FROM processing_lock WHERE task_id = %s", (task_id,)
-            )
+            db_manager.execute_transaction([
+                ("UPDATE conversion_tasks SET is_processing = FALSE WHERE id = %s", (task_id,)),
+                ("DELETE FROM processing_lock WHERE task_id = %s", (task_id,)),
+            ])
             return True
         except Exception as e:
             self._logger.error(f"Error releasing task lock: {str(e)}")

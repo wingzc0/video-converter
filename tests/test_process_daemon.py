@@ -394,13 +394,15 @@ class TestKillOrphanedFfmpeg(unittest.TestCase):
     @patch('task_manager.db_manager')
     def test_release_lock(self, mock_db):
         d = _make_process_daemon()
-        mock_db.execute_query.return_value = 1
+        mock_db.execute_transaction.return_value = True
         d.release_task_lock(task_id=5, worker_id='worker_0')
-        self.assertEqual(mock_db.execute_query.call_count, 2)
-        first_query = mock_db.execute_query.call_args_list[0][0][0]
+        self.assertEqual(mock_db.execute_transaction.call_count, 1)
+        queries = mock_db.execute_transaction.call_args[0][0]
+        self.assertEqual(len(queries), 2)
+        first_query = queries[0][0]
         self.assertIn('is_processing', first_query)
         self.assertIn('FALSE', first_query.upper())
-        second_query = mock_db.execute_query.call_args_list[1][0][0]
+        second_query = queries[1][0]
         self.assertIn('processing_lock', second_query.lower())
 
 
