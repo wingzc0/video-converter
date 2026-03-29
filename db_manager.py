@@ -104,16 +104,30 @@ class DatabaseManager:
                 raise
     
     def execute_transaction(self, queries):
-        """執行交易"""
-        # 需要多語句原子操作時（如：先 UPDATE 再 INSERT），應使用此方法而非多次呼叫 execute_query；
-        # execute_query 每次呼叫都各自 commit，無法保證跨語句的原子性
+        """在單一交易中依序執行多個 SQL 語句，全部成功才 commit，任一失敗則 rollback。
+
+        Args:
+            queries: list of (sql_string, params_tuple) pairs。
+
+        Returns:
+            list[int]: 各語句的 rowcount，順序對應 queries。
+                       可用第一個元素判斷 UPDATE 是否實際命中資料列。
+
+        Note:
+            需要多語句原子操作時（如：先 UPDATE 再 DELETE），應使用此方法而非
+            多次呼叫 execute_query()；execute_query() 每次各自 commit，
+            無法保證跨語句的原子性。
+            此方法不得用於 SELECT FOR UPDATE（commit 後行鎖立即釋放）。
+        """
         with self.get_connection() as conn:
             cursor = conn.cursor()
             try:
+                rowcounts = []
                 for query, params in queries:
                     cursor.execute(query, params or ())
+                    rowcounts.append(cursor.rowcount)
                 conn.commit()
-                return True
+                return rowcounts
             except mysql.connector.Error as err:
                 conn.rollback()
                 print(f"Transaction error: {err}")

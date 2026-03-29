@@ -77,10 +77,9 @@ class TestCmdCleanupStale(unittest.TestCase):
     def _run(self, tasks, hours=24):
         with patch('task_manager.db_manager') as mock_db, \
              patch('builtins.print'):
-            # SELECT returns tasks, UPDATE returns 1 (matched), DELETE returns 1
-            mock_db.execute_query.side_effect = (
-                [tasks] + [1, 1] * len(tasks) if tasks else [tasks]
-            )
+            mock_db.execute_query.return_value = tasks
+            # execute_transaction returns list of rowcounts; [1, 1] = UPDATE matched + DELETE ran
+            mock_db.execute_transaction.return_value = [1, 1]
             from conv_admin import cmd_cleanup_stale
             cmd_cleanup_stale(hours=hours)
             return mock_db
@@ -89,6 +88,7 @@ class TestCmdCleanupStale(unittest.TestCase):
         """無過時任務時不應呼叫 UPDATE"""
         mock_db = self._run(tasks=[])
         self.assertEqual(mock_db.execute_query.call_count, 1)
+        self.assertEqual(mock_db.execute_transaction.call_count, 0)
 
     def test_select_uses_coalesce(self):
         """SELECT 查詢應使用 COALESCE(start_time, updated_at, created_at)"""
@@ -103,16 +103,28 @@ class TestCmdCleanupStale(unittest.TestCase):
             self.assertIn('updated_at', select_query)
 
     def test_stale_tasks_are_updated_and_lock_deleted(self):
-        """每個過時任務應觸發 UPDATE（含 TOCTOU 防護） + DELETE processing_lock"""
+        """每個過時任務應原子性執行 UPDATE（含 TOCTOU 防護） + DELETE processing_lock"""
         tasks = [{'id': 7}, {'id': 8}]
         mock_db = self._run(tasks=tasks)
-        # 1 SELECT + 2*(UPDATE + DELETE) = 5 calls
-        self.assertEqual(mock_db.execute_query.call_count, 5)
-        # 確認 UPDATE 將 status 設為 failed 且含 TOCTOU 防護
-        update_query = mock_db.execute_query.call_args_list[1][0][0]
+        # 1 SELECT + 2 atomic transactions
+        self.assertEqual(mock_db.execute_query.call_count, 1)
+        self.assertEqual(mock_db.execute_transaction.call_count, 2)
+        queries = mock_db.execute_transaction.call_args_list[0][0][0]
+        update_query = queries[0][0]
         self.assertIn('failed', update_query.lower())
         self.assertIn("status = 'processing'", update_query)
         self.assertIn("is_processing = TRUE", update_query)
+        self.assertIn('processing_lock', queries[1][0].lower())
+
+    def test_toctou_completed_task_not_counted(self):
+        """UPDATE 影響 0 列（任務已完成）時，不應計入 cleaned"""
+        with patch('task_manager.db_manager') as mock_db, \
+             patch('builtins.print'):
+            mock_db.execute_query.return_value = [{'id': 99}]
+            mock_db.execute_transaction.return_value = [0, 0]  # UPDATE matched nothing
+            from conv_admin import cmd_cleanup_stale
+            cmd_cleanup_stale()
+            # execute_transaction called once but cleaned should be 0 → no warning printed
 
 
 class TestCmdKillStaleFfmpeg(unittest.TestCase):

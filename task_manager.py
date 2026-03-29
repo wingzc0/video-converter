@@ -298,22 +298,20 @@ class TaskRepository:
             cleaned = 0
             for task in stale_tasks:
                 task_id = task['id']
-                # Include original WHERE conditions to close the TOCTOU window:
-                # if the task completed between SELECT and UPDATE, rows=0 and we skip it
+                # execute_transaction() returns list of rowcounts; check the first
+                # (UPDATE) to see if the task was still processing (TOCTOU guard).
                 try:
-                    rows = db_manager.execute_query(
-                        '''UPDATE conversion_tasks
+                    rowcounts = db_manager.execute_transaction([
+                        ('''UPDATE conversion_tasks
                             SET status = 'failed',
                                 is_processing = FALSE,
                                 error_message = %s,
                                 end_time = CURRENT_TIMESTAMP
                             WHERE id = %s AND status = 'processing' AND is_processing = TRUE''',
-                        (f"Task marked as stale after {stale_hours}h (was processing)", task_id)
-                    )
-                    if rows:
-                        db_manager.execute_query(
-                            "DELETE FROM processing_lock WHERE task_id = %s", (task_id,)
-                        )
+                         (f"Task marked as stale after {stale_hours}h (was processing)", task_id)),
+                        ("DELETE FROM processing_lock WHERE task_id = %s", (task_id,)),
+                    ])
+                    if rowcounts[0]:
                         cleaned += 1
                 except Exception as e:
                     self._logger.error(f"Error cleaning stale task {task_id}: {str(e)}")

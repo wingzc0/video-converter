@@ -394,7 +394,7 @@ class TestKillOrphanedFfmpeg(unittest.TestCase):
     @patch('task_manager.db_manager')
     def test_release_lock(self, mock_db):
         d = _make_process_daemon()
-        mock_db.execute_transaction.return_value = True
+        mock_db.execute_transaction.return_value = [1, 1]
         d.release_task_lock(task_id=5, worker_id='worker_0')
         self.assertEqual(mock_db.execute_transaction.call_count, 1)
         queries = mock_db.execute_transaction.call_args[0][0]
@@ -498,21 +498,21 @@ class TestCleanupStaleTasksCoalesce(unittest.TestCase):
     @patch('daemons.process_daemon.ProcessDaemon.kill_orphaned_ffmpeg', return_value=0)
     @patch('task_manager.db_manager')
     def test_marks_stale_tasks_as_failed_and_clears_lock(self, mock_db, _kill):
-        """過時任務應標記為 failed 且清除 processing_lock"""
+        """過時任務應原子性標記為 failed 且清除 processing_lock"""
         d = _make_process_daemon()
         mock_db.execute_query.side_effect = [
             [{'id': 42}],  # SELECT 回傳 1 筆
-            1,             # UPDATE (matched)
-            1,             # DELETE processing_lock
         ]
+        mock_db.execute_transaction.return_value = [1, 1]  # UPDATE matched + DELETE ran
         result = d.cleanup_stale_tasks()
         self.assertEqual(result, 1)
-        update_query = mock_db.execute_query.call_args_list[1][0][0]
+        queries = mock_db.execute_transaction.call_args[0][0]
+        self.assertEqual(len(queries), 2)
+        update_query = queries[0][0]
         self.assertIn('failed', update_query.lower())
-        # Must guard against TOCTOU: only update if still processing
         self.assertIn("status = 'processing'", update_query)
         self.assertIn("is_processing = TRUE", update_query)
-        delete_query = mock_db.execute_query.call_args_list[2][0][0]
+        delete_query = queries[1][0]
         self.assertIn('processing_lock', delete_query.lower())
 
 
