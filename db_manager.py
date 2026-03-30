@@ -12,10 +12,11 @@ class DatabaseManager:
     
     def __init__(self):
         self.pool = None
-        self._init_pool()
-    
+        # 連接池延遲初始化：模組載入時不嘗試連線，首次 get_connection() 時才建立。
+        # 這讓單元測試可以在不依賴真實 DB 的情況下 import 此模組。
+
     def _init_pool(self):
-        """初始化連接池"""
+        """初始化連接池（首次呼叫 get_connection() 時觸發）"""
         try:
             db_config = {
                 'host': os.getenv('DB_HOST'),
@@ -33,17 +34,19 @@ class DatabaseManager:
                 # execute_query 執行後立即 commit，所以不適合用來執行需跨語句的 SELECT FOR UPDATE
                 'autocommit': False
             }
-            
+
             self.pool = mysql.connector.pooling.MySQLConnectionPool(**db_config)
             print("Database connection pool initialized")
-            
+
         except mysql.connector.Error as err:
             print(f"Error initializing connection pool: {err}")
             raise
-    
+
     @contextmanager
     def get_connection(self):
-        """取得連接上下文管理器"""
+        """取得連接上下文管理器（首次呼叫時觸發連接池初始化）"""
+        if self.pool is None:
+            self._init_pool()
         conn = None
         try:
             conn = self.pool.get_connection()
