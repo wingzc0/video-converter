@@ -10,8 +10,22 @@ import os
 import signal
 
 class ProcessDaemon(BaseDaemon):
-    """
-    處理 daemon，負責處理資料庫中的任務
+    """處理 Daemon，從資料庫取出 pending 任務並以 ffmpeg 轉檔為 480p。
+
+    功能:
+        - 執行緒池：max_workers 個 worker 執行緒並行轉檔
+        - 任務排序：retry_count ASC, created_at ASC（新任務優先）
+        - 資料庫列鎖：is_processing 旗標防止重複處理
+        - ffmpeg 雙層超時：stall timeout（無進度）+ absolute timeout
+        - 轉檔後驗證輸出時長，差異超過 DURATION_THRESHOLD 則標為 failed
+        - 失敗重試：retry_count < MAX_RETRIES 的任務定期重新排入 pending
+        - Stale 清理：卡在 processing 超過 STALE_HOURS 的任務標為 failed
+
+    主要屬性:
+        check_interval (int): 輪詢 DB 的間隔秒數
+        max_workers (int): 並行 worker 執行緒數
+        max_retries (int): 任務最大重試次數（來自 MAX_RETRIES 環境變數）
+        stale_hours (float): 判定任務 stale 的閒置時數（來自 STALE_HOURS 環境變數）
     """
     
     def __init__(self, check_interval=60, max_workers=2):

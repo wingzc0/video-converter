@@ -29,8 +29,25 @@ def _get_process_uptime(pid):
 
 
 class BaseDaemon(ABC):
-    """
-    基礎 daemon 類別，提供共用功能，支援從 .env 讀取 PID 和 log 路徑
+    """Daemon 基底類別，提供 daemonization、PID 管理、logging 與優雅停機。
+
+    功能:
+        - double-fork daemonization（透過 python-daemon DaemonContext）
+        - PID 檔管理：啟動時寫入、停止時清除，防止重複啟動
+        - WatchedFileHandler logging：支援 logrotate 自動重開檔案
+        - SIGTERM / SIGINT 導向 handle_shutdown()，設 is_running=False 優雅停機
+        - 狀態檔案（JSON）定期寫出供 API 伺服器讀取，避免直接耦合
+        - 路徑（PID/log/status）優先從環境變數讀取，其次使用建構子預設值
+
+    子類別需實作:
+        run(): 主迴圈邏輯，檢查 self.is_running 決定是否繼續執行
+        get_status_data(): 回傳要寫入狀態檔的 dict
+
+    主要屬性:
+        name (str): Daemon 名稱，用於 log 識別
+        pid_file (str): PID 檔路徑
+        log_file (str): 一般 log 路徑
+        is_running (bool): 主迴圈運行旗標，SIGTERM 後設為 False
     """
     
     def __init__(self, name, default_pid_file=None, default_log_file=None, default_stderr_log_file=None):

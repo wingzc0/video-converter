@@ -8,8 +8,21 @@ from pathlib import Path
 import os
 
 class ScanDaemon(BaseDaemon):
-    """
-    掃描 daemon，負責定期掃描目錄並添加新任務到資料庫
+    """掃描 Daemon，定期掃描輸入目錄並將符合條件的影片加入轉檔佇列。
+
+    功能:
+        - 遞迴掃描 INPUT_DIRECTORY，依副檔名與解析度篩選
+        - 跳過 IGNORE_DIRECTORIES 中的目錄
+        - 僅掃描短邊解析度 > MIN_RESOLUTION 的影片（預設 481，即跳過 480p 以下）
+        - INSERT IGNORE 避免重複加入已存在的任務
+        - 偵測 completed 但輸出檔遺失的任務，自動重置為 pending
+
+    主要屬性:
+        scan_interval (int): 掃描間隔秒數
+        base_input_dir (Path): 輸入根目錄（來自 INPUT_DIRECTORY 環境變數）
+        base_output_dir (Path): 輸出根目錄（來自 OUTPUT_DIRECTORY 環境變數）
+        min_resolution (int): 短邊解析度門檻（來自 MIN_RESOLUTION 環境變數）
+        ignore_directories (list[Path]): 掃描時跳過的目錄清單
     """
     
     def __init__(self, scan_interval=300):

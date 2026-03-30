@@ -15,8 +15,24 @@ from task_manager import TaskRepository
 load_dotenv()
 
 class APIServer:
-    """
-    API 伺服器，讀取 daemon 狀態檔案提供 API 服務
+    """API 伺服器，讀取 daemon 狀態檔案並提供 REST API 與 WebSocket 即時推送。
+
+    功能:
+        - REST API: GET /api/health、/api/status、/api/progress/{scan,process,system,stats}
+        - WebSocket: 每 2 秒廣播 daemon 狀態與任務統計（SocketIO）
+        - 狀態快取: 1 秒 TTL 避免每次廣播都觸發磁碟 I/O
+        - 狀態來源: 讀取 daemon 寫出的 JSON 狀態檔，與 daemon 解耦
+
+    主要屬性:
+        host (str): 監聽主機位址
+        port (int): 監聽埠號
+        scan_status_file (str): scanner 狀態檔路徑
+        process_status_file (str): processor 狀態檔路徑
+        status_cache_ttl (int): 狀態快取 TTL（秒，預設 1）
+
+    使用例:
+        >>> server = APIServer(host='0.0.0.0', port=5000)
+        >>> server.start()
     """
     
     def __init__(self, host='0.0.0.0', port=5000):
