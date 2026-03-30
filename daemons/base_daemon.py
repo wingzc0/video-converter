@@ -242,9 +242,15 @@ class BaseDaemon(ABC):
         log_level = os.getenv('LOG_LEVEL', 'INFO').upper()
         logger.setLevel(getattr(logging, log_level, logging.INFO))
         
-        # 關閉並移除現有的 handler，避免底層 stream/fd 洩漏
+        # 關閉並移除現有的 handler，避免底層 stream/fd 洩漏。
+        # 在 daemon 模式下，DaemonContext 進入後所有 fd 已被系統關閉，
+        # 此時呼叫 handler.close() 可能因 fd 無效而拋出 OSError，
+        # 屬於預期情況（底層 stream 已不存在），直接忽略即可
         for handler in logger.handlers[:]:
-            handler.close()
+            try:
+                handler.close()
+            except OSError:
+                pass
         logger.handlers.clear()
         
         # 檔案 handler
