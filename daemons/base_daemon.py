@@ -382,7 +382,7 @@ class BaseDaemon(ABC):
             os.kill(pid, signal.SIGTERM)
             self.logger.info(f"Sent SIGTERM to process {pid}")
             
-            # 等待程序結束
+            # 等待程序結束（輪詢 10 次 × 1 秒 = 最多等 10 秒，逾時後送 SIGKILL 強制終止）
             for _ in range(10):
                 if not os.path.exists(f"/proc/{pid}"):
                     break

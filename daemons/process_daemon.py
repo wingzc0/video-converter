@@ -227,7 +227,7 @@ class ProcessDaemon(BaseDaemon):
                     self.process_task(task_id, worker_id)
             except Exception as e:
                 self.logger.error(f"Worker {worker_id} error: {str(e)}")
-                time.sleep(1)
+                time.sleep(1)  # 例外後短暫等待，避免錯誤迴圈耗盡 CPU
             finally:
                 # release_task_lock 集中在 worker() 管理：process_task() 內部任何例外、
                 # worker_locks 操作失敗等情況都能確保 is_processing 旗標被清除，

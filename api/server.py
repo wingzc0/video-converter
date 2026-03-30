@@ -218,7 +218,7 @@ class APIServer:
             
             except Exception as e:
                 self.logger.error(f"Error in broadcast loop: {e}")
-                time.sleep(5)
+                time.sleep(5)  # 例外後短暫等待，避免錯誤迴圈耗盡 CPU
     
     def setup_routes(self):
         """設定 REST API 路由"""

@@ -131,7 +131,7 @@ def cmd_api_start(foreground=False):
             start_new_session=True,
         )
 
-    # 等子程序寫入 PID 檔（最多等 5 秒）
+    # 等子程序寫入 PID 檔（輪詢 10 次 × 0.5 秒 = 最多等 5 秒）
     for _ in range(10):
         time.sleep(0.5)
         try:
@@ -152,7 +152,7 @@ def cmd_api_stop():
     print(f"Stopping api_server (PID: {pid})...")
     try:
         os.kill(pid, _signal.SIGTERM)
-        for _ in range(10):
+        for _ in range(10):  # 輪詢 10 次 × 1 秒 = 最多等 10 秒，逾時後送 SIGKILL 強制終止
             time.sleep(1)
             try:
                 os.kill(pid, 0)
@@ -171,7 +171,7 @@ def cmd_api_stop():
 
 def cmd_api_restart(foreground=False):
     cmd_api_stop()
-    time.sleep(1)
+    time.sleep(1)  # 確保 stop 完成後再 start，避免 port/PID 檔殘留導致啟動失敗
     cmd_api_start(foreground)
 
 
@@ -313,7 +313,7 @@ def cmd_restart(daemon, name, foreground=False):
     if status['status'] == 'running':
         print(f"Stopping {name} (PID: {status['pid']})...")
         daemon.stop()
-        time.sleep(2)
+        time.sleep(2)  # 確保程序完全停止後再 start，避免 PID 檔殘留衝突
     cmd_start(daemon, name, foreground)
 
 
