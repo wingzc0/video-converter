@@ -20,6 +20,12 @@ class APIServer:
     """
     
     def __init__(self, host='0.0.0.0', port=5000):
+        """初始化 API 伺服器。
+
+        Args:
+            host: 監聽位址（預設 '0.0.0.0' 表示接受所有介面連線）。
+            port: 監聽埠號（預設 5000）；可被 API_SERVER_PORT 環境變數覆蓋。
+        """
         self.host = host
         self.port = port
         # setup_logger() 必須在 create_app() 之前呼叫，

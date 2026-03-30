@@ -15,7 +15,14 @@ class ProcessDaemon(BaseDaemon):
     """
     
     def __init__(self, check_interval=60, max_workers=2):
-        # 使用 .env 中的設定
+        """初始化處理 Daemon。
+
+        Args:
+            check_interval: 每隔多少秒輪詢資料庫一次待處理任務（秒）。
+                            由 daemon_ctl.py 從 CHECK_INTERVAL 環境變數讀入。
+            max_workers: 同時執行轉檔的工作執行緒數量。
+                         由 daemon_ctl.py 從 MAX_WORKERS 環境變數讀入。
+        """
         super().__init__(
             name="process_daemon",
             default_pid_file=os.getenv('PROCESS_DAEMON_PID_FILE', '/var/run/video-converter/processor.pid'),

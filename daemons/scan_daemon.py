@@ -13,7 +13,12 @@ class ScanDaemon(BaseDaemon):
     """
     
     def __init__(self, scan_interval=300):
-        # 使用 .env 中的設定
+        """初始化掃描 Daemon。
+
+        Args:
+            scan_interval: 每隔多少秒掃描一次輸入目錄（秒）。
+                           由 daemon_ctl.py 從 SCAN_INTERVAL 環境變數讀入。
+        """
         super().__init__(
             name="scan_daemon",
             default_pid_file=os.getenv('SCAN_DAEMON_PID_FILE', '/var/run/video-converter/scanner.pid'),

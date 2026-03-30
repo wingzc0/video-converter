@@ -34,6 +34,14 @@ class BaseDaemon(ABC):
     """
     
     def __init__(self, name, default_pid_file=None, default_log_file=None, default_stderr_log_file=None):
+        """初始化 Daemon 基底類別。
+
+        Args:
+            name: Daemon 名稱，用於 log 識別及環境變數前綴（如 NAME_PID_FILE）。
+            default_pid_file: PID 檔預設路徑；可被 {NAME}_PID_FILE 環境變數覆蓋。
+            default_log_file: 一般 log 預設路徑；可被 {NAME}_LOG_FILE 環境變數覆蓋。
+            default_stderr_log_file: 錯誤 log 預設路徑；可被 {NAME}_ERROR_LOG_FILE 環境變數覆蓋。
+        """
         self.name = name
         
         # 從環境變數讀取路徑，使用預設值作為備份

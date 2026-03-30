@@ -18,6 +18,12 @@ class TaskRepository:
     """
 
     def __init__(self, logger=None):
+        """初始化 TaskRepository。
+
+        Args:
+            logger: 自訂 logger；若為 None 則使用模組預設 logger。
+                    測試時可注入 mock logger 以捕捉 log 輸出。
+        """
         self._logger = logger or logging.getLogger(__name__)
 
     # ------------------------------------------------------------------

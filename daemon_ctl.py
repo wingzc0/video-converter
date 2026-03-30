@@ -91,6 +91,12 @@ def _read_api_pid():
 
 
 def cmd_api_start(foreground=False):
+    """啟動 API 伺服器。
+
+    Args:
+        foreground: True 時在前景執行（適合除錯或 systemd 管理）；
+                    False 時以 subprocess 背景啟動。
+    """
     if _read_api_pid():
         print("api_server is already running.")
         return
@@ -170,6 +176,11 @@ def cmd_api_stop():
 
 
 def cmd_api_restart(foreground=False):
+    """重新啟動 API 伺服器（先 stop 再 start）。
+
+    Args:
+        foreground: 傳遞給 cmd_api_start() 的前景模式旗標。
+    """
     cmd_api_stop()
     time.sleep(1)  # 確保 stop 完成後再 start，避免 port/PID 檔殘留導致啟動失敗
     cmd_api_start(foreground)
@@ -283,6 +294,13 @@ def cmd_log(target, follow=False, error=False):
 # ---------------------------------------------------------------------------
 
 def cmd_start(daemon, name, foreground=False):
+    """啟動指定 daemon（前景或背景）。
+
+    Args:
+        daemon: BaseDaemon 實例。
+        name: 顯示用名稱（如 'scan_daemon'）。
+        foreground: True 時呼叫 run_in_foreground()，False 時以 daemon_mode 背景啟動。
+    """
     print(f"Starting {name} in {'foreground' if foreground else 'background'} mode")
     print(f"PID file: {daemon.pid_file}")
     print(f"Log file: {daemon.log_file}")
@@ -295,6 +313,12 @@ def cmd_start(daemon, name, foreground=False):
 
 
 def cmd_stop(daemon, name):
+    """停止指定 daemon（發送 SIGTERM，逾時則 SIGKILL）。
+
+    Args:
+        daemon: BaseDaemon 實例。
+        name: 顯示用名稱。
+    """
     status = daemon.status()
     if status['status'] != 'running':
         print(f"{name} is not running.")
@@ -309,6 +333,13 @@ def cmd_stop(daemon, name):
 
 
 def cmd_restart(daemon, name, foreground=False):
+    """重新啟動指定 daemon（若正在執行則先 stop）。
+
+    Args:
+        daemon: BaseDaemon 實例。
+        name: 顯示用名稱。
+        foreground: 傳遞給 cmd_start() 的前景模式旗標。
+    """
     status = daemon.status()
     if status['status'] == 'running':
         print(f"Stopping {name} (PID: {status['pid']})...")
@@ -318,6 +349,11 @@ def cmd_restart(daemon, name, foreground=False):
 
 
 def cmd_status_scan(daemon):
+    """顯示 scan_daemon 的執行狀態與最近掃描統計。
+
+    Args:
+        daemon: ScanDaemon 實例。
+    """
     status = daemon.status()
     pid = status.get('pid')
     state = status.get('status', 'unknown')
@@ -340,6 +376,11 @@ def cmd_status_scan(daemon):
 
 
 def cmd_status_process(daemon):
+    """顯示 process_daemon 的執行狀態與任務處理統計。
+
+    Args:
+        daemon: ProcessDaemon 實例。
+    """
     status = daemon.status()
     pid = status.get('pid')
     state = status.get('status', 'unknown')
