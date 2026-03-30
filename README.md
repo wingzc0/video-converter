@@ -75,7 +75,7 @@ video-converter/
 │   │
 │   └── process_daemon.py      # 處理 Daemon（繼承 BaseDaemon）
 │                              #   執行緒池工作模式（預設：1 個工作執行緒，使用 queue.Queue）
-│                              #   每 CHECK_INTERVAL 秒輪詢一次資料庫的待處理任務（預設：300 秒）
+│                              #   每 CHECK_INTERVAL 秒輪詢一次資料庫的待處理任務（預設：60 秒）
 │                              #   任務排序：retry_count ASC, created_at ASC（全新任務優先）
 │                              #   使用資料庫列鎖（is_processing 旗標）防止重複處理
 │                              #   worker() 統一管理鎖生命週期（lock_acquired 旗標 + finally 釋放）

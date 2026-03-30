@@ -202,7 +202,7 @@ def cmd_reset_task(task_ids, dry_run=False):
 
 
 def cmd_cleanup_stale(hours=24):
-    """將卡在 processing 狀態超過指定時數的任務重設為 pending。
+    """將卡在 processing 狀態超過指定時數的任務標記為 failed。
 
     Args:
         hours: 判定為 stale 的閒置時數門檻（預設 24）。
