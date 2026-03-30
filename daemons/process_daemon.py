@@ -192,10 +192,12 @@ class ProcessDaemon(BaseDaemon):
                             f"Task {task_id}: Could not read source duration (ffprobe returned 0), skipping validation"
                         )
                     elif out_dur == 0:
-                        # ffprobe 無法讀取輸出檔，無法確認是否完整；
-                        # 標記為 failed 交由重試機制處理，避免靜默接受損毀輸出
+                        # ffprobe 無法讀取輸出檔，檔案可能損毀或不完整；
+                        # 刪除輸出檔並標記為 failed 交由重試機制處理，
+                        # 與時長不符的處理保持一致，避免損毀檔案留存佔用空間
                         error_msg = "Could not verify output duration (ffprobe returned 0); marked for retry"
                         self.logger.warning(f"Task {task_id}: {error_msg}")
+                        Path(output_path).unlink(missing_ok=True)
                         self.update_task_status(task_id, 'failed', error_message=error_msg)
                         self.processing_progress['tasks_failed'] += 1
                         return
