@@ -9,8 +9,7 @@ target:
   scan      掃描 daemon
   process   處理 daemon
   api       API 伺服器
-  all       同時操作 scan 和 process（不含 api）
-            ※ status 指令會額外顯示 api 狀態
+  all       同時操作 scan、process 和 api
 
 command（預設 start）:
   start     啟動
@@ -369,7 +368,7 @@ def cmd_status_process(daemon):
 USAGE = """\
 Usage: python daemon_ctl.py <target> [command] [options]
 
-  target:   scan | process | api | all (scan+process only)
+  target:   scan | process | api | all (scan+process+api)
   command:  start (default) | stop | restart | status | log
   -f / --foreground   run in foreground (start/restart)
   -f / --follow       follow log output (log)
@@ -426,8 +425,8 @@ def main():
             cmd_api_status()
         return
 
-    # all = scan + process（不含 api）
-    targets = ['scan', 'process'] if target == 'all' else [target]
+    # all = scan + process + api
+    targets = ['scan', 'process', 'api'] if target == 'all' else [target]
 
     # start/restart 用 subprocess 各自啟動，避免 DaemonContext double-fork 吃掉父程序
     if target == 'all' and command in ('start', 'restart'):
@@ -439,6 +438,17 @@ def main():
         return
 
     for t in targets:
+        if t == 'api':
+            if command == 'start':
+                cmd_api_start(foreground)
+            elif command == 'stop':
+                cmd_api_stop()
+            elif command == 'restart':
+                cmd_api_restart(foreground)
+            elif command == 'status':
+                cmd_api_status()
+            continue
+
         if t == 'scan':
             daemon = make_scan_daemon()
             name = 'scan_daemon'
@@ -456,9 +466,6 @@ def main():
             cmd_restart(daemon, name, foreground)
         elif command == 'status':
             status_fn(daemon)
-
-    if target == 'all' and command == 'status':
-        cmd_api_status()
 
 
 if __name__ == '__main__':
