@@ -38,6 +38,7 @@ class TaskRepository:
             return db_manager.execute_query(query, (limit,), fetch=True)
         except Exception as e:
             self._logger.error(f"Error getting pending tasks: {str(e)}")
+            # 回傳空列表：check cycle 本輪跳過派工，下次輪詢自動重試
             return []
 
     def get_task_by_id(self, task_id):
@@ -196,6 +197,7 @@ class TaskRepository:
 
         except Exception as e:
             self._logger.error(f"Error updating task status: {str(e)}")
+            # 靜默失敗：任務留在 processing 狀態，cleanup_stale_tasks() 最終會將其標為 failed
 
     # ------------------------------------------------------------------
     # Write operations — locking
@@ -227,6 +229,7 @@ class TaskRepository:
             return False
         except Exception as e:
             self._logger.error(f"Error acquiring task lock: {str(e)}")
+            # 回傳 False：worker 跳過此任務，任務留在 pending，下輪 check cycle 自動重試
             return False
 
     def release_task_lock(self, task_id, worker_id):
@@ -239,6 +242,7 @@ class TaskRepository:
             return True
         except Exception as e:
             self._logger.error(f"Error releasing task lock: {str(e)}")
+            # 回傳 False：is_processing 可能留 TRUE，cleanup_stale_tasks() 超時後負責清理
             return False
 
     # ------------------------------------------------------------------
@@ -315,6 +319,7 @@ class TaskRepository:
                         cleaned += 1
                 except Exception as e:
                     self._logger.error(f"Error cleaning stale task {task_id}: {str(e)}")
+                    # 單一任務失敗不中斷迴圈，繼續清理其他 stale 任務
 
             if cleaned:
                 self._logger.warning(f"Cleaned up {cleaned} stale task(s) (>{stale_hours}h in processing)")
