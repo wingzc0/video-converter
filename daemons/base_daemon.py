@@ -217,8 +217,10 @@ class BaseDaemon(ABC):
         log_level = os.getenv('LOG_LEVEL', 'INFO').upper()
         logger.setLevel(getattr(logging, log_level, logging.INFO))
         
-        # 移除現有的 handler
-        logger.handlers = []
+        # 關閉並移除現有的 handler，避免底層 stream/fd 洩漏
+        for handler in logger.handlers[:]:
+            handler.close()
+        logger.handlers.clear()
         
         # 檔案 handler
         try:
