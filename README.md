@@ -104,8 +104,7 @@ video-converter/
 │                              #   支援持續監控（-c）與單次顯示兩種模式
 │
 ├── daemon_ctl.py              # 統一管理腳本：scan/process/api 的 start/stop/restart/status/log
-│                              #   all 指令同時操作 scan 和 process（不含 api）
-│                              #   api target 獨立控制 Flask API 伺服器
+│                              #   all 指令同時操作 scan、process 和 api
 │
 ├── scripts/
 │   ├── install_daemons.sh     # 安裝腳本：將 service 模板替換後安裝至 /etc/systemd/system/
@@ -208,27 +207,28 @@ cp .env.sample .env
 
 ```bash
 # 啟動
+python3 daemon_ctl.py all start        # scan + process + api
 python3 daemon_ctl.py scan start
 python3 daemon_ctl.py process start
 python3 daemon_ctl.py api start
-python3 daemon_ctl.py all start        # scan + process（不含 api）
 
 # 停止
+python3 daemon_ctl.py all stop
 python3 daemon_ctl.py scan stop
 python3 daemon_ctl.py process stop
 python3 daemon_ctl.py api stop
-python3 daemon_ctl.py all stop
 
 # 重新啟動
+python3 daemon_ctl.py all restart
 python3 daemon_ctl.py scan restart
 python3 daemon_ctl.py process restart
 python3 daemon_ctl.py api restart
 
 # 查看狀態
+python3 daemon_ctl.py all status
 python3 daemon_ctl.py scan status
 python3 daemon_ctl.py process status
 python3 daemon_ctl.py api status
-python3 daemon_ctl.py all status
 ```
 
 **`status` 輸出範例：**
