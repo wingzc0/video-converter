@@ -166,31 +166,23 @@ def convert_to_480p(input_path, output_path, progress_callback=None,
                         # 避免 FFmpeg 回傳成功但輸出檔案尚未完整寫入時就顯示 100%
                         progress = min(99.9, (current_time / duration) * 100)  # 保留100%給完成狀態
                         progress_callback(progress)
+            return_code = process.wait()
         except Exception as e:
             print(f"Conversion error: {e}")
             # 確保 ffmpeg 子程序不會成為孤兒程序繼續佔用資源；
-            # 先關閉 stdout/stderr pipe 避免 pipe buffer 滿時 wait() 死鎖
+            # process 已被 kill，wait() 不會因 pipe buffer 滿而死鎖
             process.kill()
-            try:
-                process.stdout.close()
-            except Exception:
-                pass
-            try:
-                process.stderr.close()
-            except Exception:
-                pass
             process.wait()
             return False, str(e)
-        
-        return_code = process.wait()
-        try:
-            process.stdout.close()
-        except Exception:
-            pass
-        try:
-            process.stderr.close()
-        except Exception:
-            pass
+        finally:
+            # 無論正常結束或例外，確保 stdout/stderr pipe fd 都被正確關閉，避免 fd 洩漏
+            for fd in [process.stdout, process.stderr]:
+                if fd is not None:
+                    try:
+                        fd.close()
+                    except OSError:
+                        pass
+
         if return_code == 0:
             return True, None
         # 組合失敗原因：timeout 原因優先，其次附上 ffmpeg stderr 最後幾行
