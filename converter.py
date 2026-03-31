@@ -123,7 +123,7 @@ def convert_to_480p(input_path, output_path, progress_callback=None,
                     timeout_reason[0] = f"ffmpeg stall timeout ({ffmpeg_stall_timeout}s without progress)"
                     proc.kill()
                     return
-                time.sleep(2)
+                time.sleep(2)  # 每 2 秒輪詢一次，兼顧即時性與 CPU 佔用
 
         start_time = time.monotonic()
         last_progress_time = [start_time]  # list 讓 watchdog closure 可讀取最新值
