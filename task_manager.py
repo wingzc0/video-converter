@@ -355,18 +355,39 @@ class TaskRepository:
             return 0
 
     def cleanup_orphaned_flags(self):
-        """清理上次崩潰留下的孤兒 is_processing 旗標，回傳清理數量。
+        """清理上次崩潰留下的孤兒任務，回傳清理數量。
 
-        崩潰後任務狀態為 status='processing', is_processing=TRUE。
-        同時重設 status='pending' 以讓任務重新被排程，
-        否則任務會卡在 status='processing', is_processing=FALSE 的無人處理狀態。
+        處理兩種殭屍狀態：
+        1. status='processing', is_processing=TRUE
+           → daemon 崩潰時正在處理，lock 未釋放。
+             重設為 pending，讓任務重新排程。
+        2. status='processing', is_processing=FALSE, updated_at 超過 5 分鐘
+           → release_task_lock() 執行後 daemon 崩潰（update_task_status 未執行），
+             lock 已釋放但 status 未更新，任何清理機制都不會觸及此狀態。
+             5 分鐘閾值確保不誤殺 release_task_lock 與 update_task_status
+             之間的正常毫秒級時間窗口。
         """
         try:
-            cleaned = db_manager.execute_query(
+            # 殭屍類型 1：lock 未釋放
+            cleaned_locked = db_manager.execute_query(
                 "UPDATE conversion_tasks SET is_processing = FALSE, status = 'pending' "
                 "WHERE status = 'processing' AND is_processing = TRUE"
-            )
-            return cleaned or 0
+            ) or 0
+
+            # 殭屍類型 2：lock 已釋放但 status 未更新（超過 5 分鐘確保不誤殺正常流程）
+            cleaned_unlocked = db_manager.execute_query(
+                "UPDATE conversion_tasks SET status = 'pending' "
+                "WHERE status = 'processing' AND is_processing = FALSE "
+                "AND updated_at < NOW() - INTERVAL 5 MINUTE"
+            ) or 0
+
+            total = cleaned_locked + cleaned_unlocked
+            if cleaned_unlocked > 0:
+                self._logger.warning(
+                    f"Cleaned up {cleaned_unlocked} zombie task(s) "
+                    f"(status=processing, is_processing=FALSE)"
+                )
+            return total
         except Exception as e:
             self._logger.error(f"Error cleaning up orphaned flags: {str(e)}")
             return 0

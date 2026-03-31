@@ -328,26 +328,35 @@ class TestResetTasksToPending(unittest.TestCase):
 class TestCleanupOrphanedFlags(unittest.TestCase):
 
     @patch('task_manager.db_manager')
-    def test_returns_count_of_cleaned_rows(self, mock_db):
-        mock_db.execute_query.return_value = 4
-        self.assertEqual(_repo().cleanup_orphaned_flags(), 4)
+    def test_returns_sum_of_both_zombie_types(self, mock_db):
+        """type-1（is_processing=TRUE）+ type-2（is_processing=FALSE）兩者之和"""
+        mock_db.execute_query.side_effect = [3, 2]
+        self.assertEqual(_repo().cleanup_orphaned_flags(), 5)
 
     @patch('task_manager.db_manager')
     def test_returns_zero_when_nothing_to_clean(self, mock_db):
-        mock_db.execute_query.return_value = 0
+        mock_db.execute_query.side_effect = [0, 0]
         self.assertEqual(_repo().cleanup_orphaned_flags(), 0)
 
     @patch('task_manager.db_manager')
-    def test_query_resets_status_to_pending_and_clears_is_processing(self, mock_db):
-        mock_db.execute_query.return_value = 0
+    def test_type1_query_resets_status_and_clears_lock(self, mock_db):
+        """type-1：WHERE is_processing=TRUE → 同時重設 status 與 is_processing"""
+        mock_db.execute_query.side_effect = [0, 0]
         _repo().cleanup_orphaned_flags()
-        query = mock_db.execute_query.call_args[0][0]
-        # Must reset both columns so tasks re-enter the pending queue
-        self.assertIn("status = 'pending'", query)
-        self.assertIn("is_processing = FALSE", query)
-        # WHERE must target processing+is_processing=TRUE (orphaned state after crash)
-        self.assertIn("status = 'processing'", query)
-        self.assertIn("is_processing = TRUE", query)
+        first_query = mock_db.execute_query.call_args_list[0][0][0]
+        self.assertIn("status = 'pending'", first_query)
+        self.assertIn("is_processing = FALSE", first_query)
+        self.assertIn("is_processing = TRUE", first_query)
+
+    @patch('task_manager.db_manager')
+    def test_type2_query_targets_unlocked_zombie(self, mock_db):
+        """type-2：WHERE is_processing=FALSE AND updated_at < threshold → 重設 status"""
+        mock_db.execute_query.side_effect = [0, 0]
+        _repo().cleanup_orphaned_flags()
+        second_query = mock_db.execute_query.call_args_list[1][0][0]
+        self.assertIn("status = 'pending'", second_query)
+        self.assertIn("is_processing = FALSE", second_query)
+        self.assertIn("INTERVAL 5 MINUTE", second_query)
 
     @patch('task_manager.db_manager')
     def test_db_error_returns_zero(self, mock_db):
