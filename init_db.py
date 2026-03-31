@@ -21,6 +21,8 @@ def init_database():
         
         # 建立資料庫
         db_name = os.getenv('DB_NAME')
+        if not db_name:
+            raise ValueError("DB_NAME environment variable is not set")
         # utf8mb4：完整支援 Unicode（含 emoji 與 4-byte 字元），
         # 與 utf8（最多 3-byte）不同，可正確儲存非 BMP 字元路徑
         cursor.execute(f"CREATE DATABASE IF NOT EXISTS {db_name} CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci")

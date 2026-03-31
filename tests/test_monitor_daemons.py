@@ -337,9 +337,17 @@ class TestGetDaemonStatus(unittest.TestCase):
         uptime_file_mock.__exit__ = MagicMock(return_value=False)
         uptime_file_mock.read.return_value = proc_uptime_content
         
-        # 設定 open 的 side_effect，依序返回三個 mock
-        mock_open.side_effect = [pid_file_mock, stat_file_mock, uptime_file_mock]
-        
+        # 建立路徑對應的 mock，避免依賴 open() 呼叫順序
+        def open_side_effect(path, *args, **kwargs):
+            path_str = str(path)
+            if path_str.endswith('.pid'):
+                return pid_file_mock
+            elif '/stat' in path_str:
+                return stat_file_mock
+            else:
+                return uptime_file_mock
+        mock_open.side_effect = open_side_effect
+
         with patch('os.sysconf', return_value=100):
             result = self.monitor.get_daemon_status('scan')
         

@@ -355,7 +355,7 @@ class TestGlobalDbManager(unittest.TestCase):
         
         from db_manager import db_manager
         self.assertIsNotNone(db_manager)
-        self.assertIsInstance(db_manager.pool, type(None))  # 延遲初始化，初始應為 None
+        self.assertIsNone(db_manager.pool)  # 延遲初始化，初始應為 None
 
 
 if __name__ == '__main__':

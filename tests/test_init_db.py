@@ -222,6 +222,24 @@ class TestInitDatabase(unittest.TestCase):
         # 驗證 conn.close 不被呼叫（因為連線未建立）
         mock_conn.close.assert_not_called()
 
+    def test_missing_db_name_raises_error(self):
+        """測試 DB_NAME 未設定時應拋出 ValueError"""
+        os.environ.pop('DB_NAME', None)
+
+        with patch('dotenv.load_dotenv'):
+            from init_db import init_database
+
+        with patch('init_db.mysql.connector.connect') as mock_connect:
+            mock_conn = MagicMock()
+            mock_conn.cursor.return_value = MagicMock()
+            mock_conn.is_connected.return_value = True
+            mock_connect.return_value = mock_conn
+
+            # DB_NAME 缺失不應靜默建立名為 "None" 的資料庫，應拋出 ValueError
+            with self.assertRaises(ValueError) as ctx:
+                init_database()
+            self.assertIn('DB_NAME', str(ctx.exception))
+
     def test_env_variables_loading(self):
         """測試環境變數正確載入"""
         # 設定自訂端口
@@ -269,27 +287,27 @@ class TestInitDatabaseMainBlock(unittest.TestCase):
 
     def test_main_block_execution(self):
         """測試直接執行腳本時呼叫 init_database"""
-        # 設定環境變數
-        os.environ.setdefault('DB_HOST', 'localhost')
-        os.environ.setdefault('DB_PORT', '3306')
-        os.environ.setdefault('DB_USER', 'test')
-        os.environ.setdefault('DB_PASSWORD', 'test')
-        os.environ.setdefault('DB_NAME', 'test')
-        
-        with patch('init_db.init_database') as mock_init:
-            # 模擬 __main__ 執行
-            import init_db
-            # 手動觸發 main 區塊邏輯
-            if hasattr(init_db, '__name__'):
-                original_name = init_db.__name__
-                init_db.__name__ = '__main__'
-                try:
-                    # 由於我們無法真正改變 __name__，這裡只驗證 init_database 可被呼叫
-                    mock_init.return_value = None
-                    init_db.init_database()
-                    mock_init.assert_called_once()
-                finally:
-                    init_db.__name__ = original_name
+        import runpy
+
+        with patch.dict(os.environ, {
+            'DB_HOST': 'localhost',
+            'DB_PORT': '3306',
+            'DB_USER': 'test',
+            'DB_PASSWORD': 'test',
+            'DB_NAME': 'test_db',
+        }):
+            with patch('mysql.connector.connect') as mock_connect, \
+                 patch('dotenv.load_dotenv'):
+                mock_conn = MagicMock()
+                mock_cursor = MagicMock()
+                mock_connect.return_value = mock_conn
+                mock_conn.cursor.return_value = mock_cursor
+                mock_conn.is_connected.return_value = True
+
+                # 以 __main__ 身份執行 init_db，驗證 if __name__ == '__main__' 區塊有呼叫 init_database()
+                runpy.run_module('init_db', run_name='__main__')
+
+                mock_connect.assert_called_once()
 
 
 if __name__ == '__main__':
