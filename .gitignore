@@ -1,4 +1,5 @@
-```
-# Test files
-tests/**
-```
+__pycache__
+.env
+run/
+log/
+.aider*
