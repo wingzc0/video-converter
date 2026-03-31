@@ -85,6 +85,9 @@ video-converter/
 │                              #   status='completed'/'failed' 時原子性清除 is_processing 旗標
 │                              #   retry_count 在 update_task_status(failed) 時遞增（非重新排入時）
 │                              #   更新任務狀態：pending → processing → completed/failed
+│                              #   啟動時執行 cleanup_orphaned_flags()，清理兩種殭屍狀態：
+│                              #     type-1：status=processing + is_processing=TRUE（crash 未釋放鎖）
+│                              #     type-2：status=processing + is_processing=FALSE + >5min（鎖已釋放但 status 未更新）
 │                              #   自動重試失敗任務（每 RETRY_INTERVAL_CYCLES 次 check 執行一次）
 │                              #   自動清除過時任務（每次 check 都執行，閾值 STALE_HOURS）
 │                              #   每次 stale cleanup 同時 kill 孤兒 ffmpeg：
@@ -454,4 +457,11 @@ journalctl -u video-api       -f
 - **可觀測性**（`api/server.py`）：REST API + WebSocket 即時推送
 - **監控**（`monitor_daemons.py`）：終端機儀表板
 
-資料庫列鎖機制（`is_processing` 旗標 + `processing_lock` 表）確保多個工作執行緒同時運行時不會重複處理同一個檔案。鎖的生命週期統一由 `worker()` 管理；`status='completed'/'failed'` 的 UPDATE 同時原子性清除 `is_processing`，即使程序在 finally 釋放前崩潰也不會造成任務永久卡死。`retry_count` 代表已嘗試次數，每次標記 `failed` 時遞增，`MAX_RETRIES=N` 表示最多執行 N 次。
+資料庫列鎖機制（`is_processing` 旗標 + `processing_lock` 表）確保多個工作執行緒同時運行時不會重複處理同一個檔案。鎖的生命週期統一由 `worker()` 管理；`status='completed'/'failed'` 的 UPDATE 同時原子性清除 `is_processing`，即使程序崩潰也能在下次啟動時由 `cleanup_orphaned_flags()` 清理。`retry_count` 代表已嘗試次數，每次標記 `failed` 時遞增，`MAX_RETRIES=N` 表示最多執行 N 次。
+
+**殭屍任務清理**（`cleanup_orphaned_flags`，daemon 啟動時執行）：
+
+| 殭屍類型 | 狀態 | 成因 | 處置 |
+|---|---|---|---|
+| Type-1 | `status=processing` + `is_processing=TRUE` | Daemon crash，鎖未釋放 | → `pending`（重設 is_processing + status） |
+| Type-2 | `status=processing` + `is_processing=FALSE` + 超過 5 分鐘 | `release_task_lock()` 執行後 crash，`update_task_status` 未執行 | → `pending`（重設 status） |
