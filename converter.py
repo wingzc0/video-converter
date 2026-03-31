@@ -140,6 +140,7 @@ def convert_to_480p(input_path, output_path, progress_callback=None,
         stderr_tail = []  # 收集 ffmpeg stderr 最後幾行，失敗時用於診斷
         # FFmpeg 將進度資訊寫入 stderr 而非 stdout；
         # 逐行讀取 stderr 以解析 time= 欄位，當 readline() 回傳空字串表示子程序輸出已結束
+        return_code = None  # 確保 except 後若有程式碼變動時不會出現 NameError
         try:
             while True:
                 line = process.stderr.readline()

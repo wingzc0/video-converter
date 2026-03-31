@@ -215,12 +215,15 @@ class ScanDaemon(BaseDaemon):
                 pass
 
         # 規則 2：相對路徑 component 連續子序列比對
+        # 使用原始路徑的 parts（未 resolve）：若目錄本身是 symlink，
+        # resolve() 會跟隨連結取得 target 路徑，導致 @Recycle 等名稱消失於 parts 中；
+        # 使用邏輯路徑確保 symlink 目錄名稱仍能被正確匹配
         if self.ignore_rel_patterns:
-            path_parts = resolved.parts
+            logical_parts = Path(path).parts
             for pattern in self.ignore_rel_patterns:
                 m = len(pattern)
-                if any(path_parts[i:i + m] == pattern
-                       for i in range(len(path_parts) - m + 1)):
+                if any(logical_parts[i:i + m] == pattern
+                       for i in range(len(logical_parts) - m + 1)):
                     return True
 
         return False
