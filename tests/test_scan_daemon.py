@@ -50,37 +50,40 @@ class TestShouldSkipFile(unittest.TestCase):
 
 
 class TestShouldIgnorePath(unittest.TestCase):
-    """should_ignore_path() — 使用 Path.relative_to() 精確比對，避免前綴誤判"""
+    """should_ignore_path() — 絕對路徑前綴比對 + 相對路徑任意位置比對"""
 
     def setUp(self):
         import tempfile
         self.tmp = tempfile.mkdtemp()
 
-    def _make_daemon_with_ignore(self, ignore_dirs):
+    def _make_daemon_with_ignore(self, ignore_dirs, ignore_output_dir='false'):
         (Path(self.tmp) / 'input').mkdir(exist_ok=True)
         (Path(self.tmp) / 'output').mkdir(exist_ok=True)
         with patch.dict('os.environ', {
             'INPUT_DIRECTORY': str(Path(self.tmp) / 'input'),
             'OUTPUT_DIRECTORY': str(Path(self.tmp) / 'output'),
             'IGNORE_DIRECTORIES': ','.join(ignore_dirs),
+            'IGNORE_OUTPUT_DIR': ignore_output_dir,
         }):
             from daemons.scan_daemon import ScanDaemon
             return ScanDaemon(scan_interval=60)
 
-    def test_exact_match_ignored(self):
+    # ── 絕對路徑 ────────────────────────────────────────────────────────────
+
+    def test_abs_exact_match_ignored(self):
         ignore = str(Path(self.tmp) / 'input' / 'skip_me')
         daemon = self._make_daemon_with_ignore([ignore])
         self.assertTrue(daemon.should_ignore_path(Path(ignore)))
 
-    def test_subpath_is_ignored(self):
-        """子目錄也應被忽略"""
+    def test_abs_subpath_is_ignored(self):
+        """絕對路徑的子目錄也應被忽略"""
         ignore = str(Path(self.tmp) / 'input' / 'skip_me')
         daemon = self._make_daemon_with_ignore([ignore])
         self.assertTrue(daemon.should_ignore_path(
             Path(self.tmp) / 'input' / 'skip_me' / 'subdir'
         ))
 
-    def test_prefix_only_not_ignored(self):
+    def test_abs_prefix_only_not_ignored(self):
         """/data/out 不應誤匹配 /data/output（字串前綴的 bug）"""
         ignore = str(Path(self.tmp) / 'input' / 'out')
         daemon = self._make_daemon_with_ignore([ignore])
@@ -88,16 +91,78 @@ class TestShouldIgnorePath(unittest.TestCase):
             Path(self.tmp) / 'input' / 'output'
         ))
 
-    def test_non_ignored_path_allowed(self):
+    def test_abs_non_ignored_path_allowed(self):
         ignore = str(Path(self.tmp) / 'input' / 'skip_me')
         daemon = self._make_daemon_with_ignore([ignore])
         self.assertFalse(daemon.should_ignore_path(
             Path(self.tmp) / 'input' / 'keep_me'
         ))
 
+    # ── 相對路徑（單層名稱） ─────────────────────────────────────────────────
+
+    def test_rel_single_matches_at_root_level(self):
+        """單層相對路徑應匹配輸入目錄根層的同名目錄"""
+        daemon = self._make_daemon_with_ignore(['@Recycle'])
+        self.assertTrue(daemon.should_ignore_path(
+            Path(self.tmp) / 'input' / '@Recycle'
+        ))
+
+    def test_rel_single_matches_nested(self):
+        """單層相對路徑應匹配掃描樹任意深度的同名目錄"""
+        daemon = self._make_daemon_with_ignore(['@Recycle'])
+        self.assertTrue(daemon.should_ignore_path(
+            Path(self.tmp) / 'input' / 'a' / 'b' / '@Recycle' / 'deep'
+        ))
+
+    def test_rel_single_no_partial_match(self):
+        """單層相對路徑不應匹配包含該名稱的其他目錄（如 @Recycle2）"""
+        daemon = self._make_daemon_with_ignore(['@Recycle'])
+        self.assertFalse(daemon.should_ignore_path(
+            Path(self.tmp) / 'input' / '@Recycle2'
+        ))
+
+    # ── 相對路徑（多層） ─────────────────────────────────────────────────────
+
+    def test_rel_multilevel_matches_at_root(self):
+        """多層相對路徑應匹配輸入目錄根層的連續子目錄"""
+        daemon = self._make_daemon_with_ignore(['BCD/ABC'])
+        self.assertTrue(daemon.should_ignore_path(
+            Path(self.tmp) / 'input' / 'BCD' / 'ABC' / 'video.mp4'
+        ))
+
+    def test_rel_multilevel_matches_nested(self):
+        """多層相對路徑應匹配掃描樹任意位置的連續子目錄"""
+        daemon = self._make_daemon_with_ignore(['BCD/ABC'])
+        self.assertTrue(daemon.should_ignore_path(
+            Path(self.tmp) / 'input' / 'x' / 'BCD' / 'ABC' / 'video.mp4'
+        ))
+
+    def test_rel_multilevel_no_partial_match(self):
+        """多層相對路徑不應只匹配部分層（BCD 而非 BCD/ABC）"""
+        daemon = self._make_daemon_with_ignore(['BCD/ABC'])
+        self.assertFalse(daemon.should_ignore_path(
+            Path(self.tmp) / 'input' / 'BCD' / 'OTHER'
+        ))
+
+    # ── 其他 ────────────────────────────────────────────────────────────────
+
     def test_empty_ignore_list(self):
         daemon = self._make_daemon_with_ignore([])
         self.assertFalse(daemon.should_ignore_path(Path(self.tmp) / 'input' / 'anything'))
+
+    def test_ignore_output_dir_env(self):
+        """IGNORE_OUTPUT_DIR=true 應自動忽略 OUTPUT_DIRECTORY"""
+        daemon = self._make_daemon_with_ignore([], ignore_output_dir='true')
+        self.assertTrue(daemon.should_ignore_path(
+            Path(self.tmp) / 'output' / 'video.mp4'
+        ))
+
+    def test_ignore_output_dir_false(self):
+        """IGNORE_OUTPUT_DIR=false 時輸出目錄不應被自動忽略"""
+        daemon = self._make_daemon_with_ignore([], ignore_output_dir='false')
+        self.assertFalse(daemon.should_ignore_path(
+            Path(self.tmp) / 'output' / 'video.mp4'
+        ))
 
 
 class TestScanDirectoryFiltering(unittest.TestCase):

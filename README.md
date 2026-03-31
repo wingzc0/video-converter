@@ -183,6 +183,8 @@ cp .env.sample .env
 | `OUTPUT_DIRECTORY` | 輸出目錄 |
 | `SUPPORTED_EXTENSIONS` | 支援的副檔名（預設：`.mp4,.mkv,.avi,.mov,.flv,.wmv,.m4v,.webm`） |
 | `MIN_RESOLUTION` | 最低解析度（預設：`481`，即跳過 ≤ 480p 的檔案） |
+| `IGNORE_DIRECTORIES` | 掃描時略過的目錄，逗號分隔。支援兩種格式：<br>• **絕對路徑**（`/BCVNAS/archive`）：精確前綴比對，只忽略該路徑本身及其子目錄<br>• **相對路徑**（`@Recycle`、`BCD/ABC`）：比對路徑中連續的目錄名稱序列，忽略掃描樹任意位置的同名目錄（單層或多層皆支援） |
+| `IGNORE_OUTPUT_DIR` | 設為 `true` 時自動忽略 `OUTPUT_DIRECTORY`，無需在 `IGNORE_DIRECTORIES` 重複列出（預設：`true`） |
 | `MAX_WORKERS` | 最大工作執行緒數 |
 | `SCAN_INTERVAL` | 掃描間隔（秒，預設 300；NFS 環境建議 1800） |
 | `CHECK_INTERVAL` | 任務輪詢間隔（秒） |
