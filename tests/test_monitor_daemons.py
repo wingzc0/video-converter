@@ -342,7 +342,7 @@ class TestGetDaemonStatus(unittest.TestCase):
             path_str = str(path)
             if path_str.endswith('.pid'):
                 return pid_file_mock
-            elif '/stat' in path_str:
+            elif path_str.endswith('/stat'):
                 return stat_file_mock
             else:
                 return uptime_file_mock
