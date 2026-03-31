@@ -135,6 +135,8 @@ class DatabaseManager:
                 conn.rollback()
                 print(f"Transaction error: {err}")
                 raise
+            finally:
+                cursor.close()
     
     def health_check(self):
         """資料庫健康檢查"""
