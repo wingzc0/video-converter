@@ -44,12 +44,28 @@ class ScanDaemon(BaseDaemon):
         self.supported_extensions = set(ext.strip().lower() for ext in os.getenv('SUPPORTED_EXTENSIONS', '.mp4,.mkv,.avi,.mov,.flv,.wmv,.m4v,.webm').split(','))
         self.min_resolution = int(os.getenv('MIN_RESOLUTION', '481'))
 
-        # 解析忽略目錄清單，轉為 resolved Path 物件以便精確比對
+        # 解析忽略清單，分為兩類：
+        # - 絕對路徑（以 / 開頭）：resolve 後做前綴比對，只忽略該特定路徑
+        # - 相對路徑（如 @Recycle、BCD/ABC）：比對路徑中連續的 component 序列，
+        #   忽略掃描樹任何位置符合該相對路徑的目錄（單層或多層皆支援）
         raw_ignore = os.getenv('IGNORE_DIRECTORIES', '')
-        self.ignore_directories = [
-            Path(d.strip()).resolve()
-            for d in raw_ignore.split(',') if d.strip()
-        ]
+        self.ignore_abs_dirs = []      # 絕對路徑清單（resolved Path）
+        self.ignore_rel_patterns = []  # 相對路徑 component 序列清單（tuple of str）
+        for d in raw_ignore.split(','):
+            d = d.strip()
+            if not d:
+                continue
+            p = Path(d)
+            if p.is_absolute():
+                self.ignore_abs_dirs.append(p.resolve())
+            else:
+                # 轉為 component tuple，方便後續做連續子序列比對
+                self.ignore_rel_patterns.append(tuple(p.parts))
+
+        # 若設定 IGNORE_OUTPUT_DIR=true，自動將輸出目錄加入絕對路徑忽略清單
+        if os.getenv('IGNORE_OUTPUT_DIR', '').lower() == 'true':
+            if self.base_output_dir not in self.ignore_abs_dirs:
+                self.ignore_abs_dirs.append(self.base_output_dir)
 
         # 輸出檔長度驗證設定已移至 process_daemon（轉檔完成後才驗證）
 
@@ -178,10 +194,18 @@ class ScanDaemon(BaseDaemon):
             self.scan_progress['status'] = 'idle'
     
     def should_ignore_path(self, path):
-        """檢查路徑是否應該被忽略，使用 Path.relative_to() 進行精確比對，
-        避免字串前綴誤匹配（如 /data/out 誤匹配 /data/output）"""
+        """檢查路徑是否應該被忽略。
+
+        兩種忽略規則：
+        1. 絕對路徑（ignore_abs_dirs）：路徑等於或位於指定目錄之下，使用
+           Path.relative_to() 精確比對，避免 /data/out 誤匹配 /data/output。
+        2. 相對路徑模式（ignore_rel_patterns）：路徑的 parts 中存在與模式相符的
+           連續子序列，支援單層（@Recycle）或多層（BCD/ABC）任意位置匹配。
+        """
         resolved = Path(path).resolve()
-        for ignore_dir in self.ignore_directories:
+
+        # 規則 1：絕對路徑前綴比對
+        for ignore_dir in self.ignore_abs_dirs:
             if resolved == ignore_dir:
                 return True
             try:
@@ -189,6 +213,16 @@ class ScanDaemon(BaseDaemon):
                 return True
             except ValueError:
                 pass
+
+        # 規則 2：相對路徑 component 連續子序列比對
+        if self.ignore_rel_patterns:
+            path_parts = resolved.parts
+            for pattern in self.ignore_rel_patterns:
+                m = len(pattern)
+                if any(path_parts[i:i + m] == pattern
+                       for i in range(len(path_parts) - m + 1)):
+                    return True
+
         return False
 
     def should_skip_file(self, filename):
