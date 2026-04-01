@@ -432,6 +432,62 @@ journalctl -u video-api       -f
 
 ---
 
+## NFS 環境建議設定
+
+本系統設計於 NFS 環境下運行，讀取來源影片與寫入輸出檔案均透過 NFS。以下為針對大檔（單檔 10GB+）影片轉檔的建議設定。
+
+### NFS Mount 參數
+
+建議於 `/etc/fstab` 加入以下參數（已驗證於 NFSv4.1）：
+
+```
+<server>:/path  <mountpoint>  nfs4  rw,noatime,vers=4.1,rsize=1048576,wsize=1048576,hard,proto=tcp,timeo=600,retrans=5,_netdev  0 0
+```
+
+| 參數 | 建議值 | 說明 |
+|------|--------|------|
+| `vers=4.1` | NFSv4.1 | 支援 session 復原，比 v3 更穩定 |
+| `rsize=1048576` | 1MB | 最大讀取區塊，大檔效率最佳 |
+| `wsize=1048576` | 1MB | 最大寫入區塊，大檔效率最佳 |
+| `hard` | hard | I/O 錯誤時無限重試，避免轉檔中途中斷 |
+| `proto=tcp` | tcp | 比 UDP 更可靠，適合長時間傳輸 |
+| `timeo=600` | 60s | NFS 請求逾時（單位 0.1s），60s 為合理上限 |
+| `retrans=5` | 5 | 逾時後重試次數 |
+| `noatime` | — | 不更新存取時間，減少 NFS metadata 寫入 |
+
+### Linux TCP Socket 緩衝（強烈建議）
+
+預設 TCP socket 緩衝只有 ~200KB，在讀取大型 NFS 檔案時容易造成 TCP 窗口縮小、讀取停頓，進而導致 ffmpeg 輸出不完整。
+
+在 `/etc/sysctl.conf` 加入：
+
+```ini
+net.core.rmem_max = 16777216
+net.core.wmem_max = 16777216
+net.ipv4.tcp_rmem = 4096 131072 16777216
+net.ipv4.tcp_wmem = 4096 131072 16777216
+net.ipv4.tcp_window_scaling = 1
+```
+
+套用：
+
+```bash
+sudo sysctl -p
+```
+
+### 為何需要這些設定
+
+本系統在 NFS 環境下最常見的失敗原因是 **NFS I/O 中斷導致 ffmpeg 輸出不完整**：
+
+1. ffmpeg 從 NFS 讀取大型來源檔案（如 4K MXF，單檔 60GB+）
+2. TCP 緩衝不足或 NFS 短暫中斷，ffmpeg 停止讀取
+3. ffmpeg 以 rc=0 退出，但輸出時長遠短於來源
+4. 系統偵測到輸出時長差異，標記為 `failed`（`Incomplete output`）
+
+調大 TCP 緩衝後，大型檔案的連續讀取更穩定，可顯著降低 `Incomplete output` 的發生率。
+
+---
+
 ## 已知限制
 
 ### 輸出路徑命名衝突
