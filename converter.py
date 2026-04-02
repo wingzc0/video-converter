@@ -62,7 +62,8 @@ def compute_output_name(file_path):
     return f"480p_{p.stem}_{orig_suffix}.mp4"
 
 def convert_to_480p(input_path, output_path, progress_callback=None,
-                    ffmpeg_timeout=None, ffmpeg_stall_timeout=None):
+                    ffmpeg_timeout=None, ffmpeg_stall_timeout=None,
+                    _diag=None):
     """使用 ffmpeg 將影片轉換為 480p H.264/AAC，支援進度回調與超時保護。
 
     Args:
@@ -79,6 +80,11 @@ def convert_to_480p(input_path, output_path, progress_callback=None,
     # FFmpeg命令：自動縮放至480p並保持比例
     cmd = [
         'ffmpeg',
+        # -nostdin：停用 stdin 互動模式，避免 ffmpeg 將 stdin 的二進位資料（如 NFS 來源檔案的位元組）
+        # 誤判為鍵盤指令（例如 'q' 字元導致 ffmpeg 提早優雅退出並回傳 RC=0）。
+        # 在 daemon 環境下 ffmpeg 的 fd 0 會繼承到來源檔案，若不加此參數
+        # mpeg/mxf 二進位資料中的 0x71 ('q') 位元組將觸發 ffmpeg 中途停止。
+        '-nostdin',
         '-i', input_path,
         # scale=-2:480：高度固定為 480px，寬度由 ffmpeg 自動計算並取偶數（-2）以滿足 H.264 編碼對偶數寬度的要求
         '-vf', 'scale=-2:480',  # 自動計算寬度保持比例
@@ -185,6 +191,10 @@ def convert_to_480p(input_path, output_path, progress_callback=None,
                         pass
 
         if return_code == 0:
+            # 將診斷資訊回填給呼叫者（如有傳入 _diag dict）
+            if _diag is not None:
+                _diag['current_time'] = current_time
+                _diag['stderr_tail'] = stderr_tail
             return True, None
         # 組合失敗原因：timeout 原因優先，其次附上 ffmpeg stderr 最後幾行
         base_reason = timeout_reason[0] or "ffmpeg exited with non-zero return code"

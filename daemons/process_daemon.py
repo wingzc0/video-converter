@@ -173,10 +173,12 @@ class ProcessDaemon(BaseDaemon):
                 self.update_task_status(task_id, 'processing', progress=progress)
             
             # 執行轉檔
+            _diag = {}
             success, conv_error = convert_to_480p(
                 input_path, output_path, progress_callback,
                 ffmpeg_timeout=self.ffmpeg_timeout,
                 ffmpeg_stall_timeout=self.ffmpeg_stall_timeout,
+                _diag=_diag,
             )
             
             # 更新最終狀態
@@ -202,11 +204,16 @@ class ProcessDaemon(BaseDaemon):
                         self.processing_progress['tasks_failed'] += 1
                         return
                     elif abs(src_dur - out_dur) > self.duration_threshold:
+                        ffmpeg_last_time = _diag.get('current_time', -1)
+                        ffmpeg_stderr = _diag.get('stderr_tail', [])
+                        diag_str = f"ffmpeg_last_time={ffmpeg_last_time:.1f}s"
+                        if ffmpeg_stderr:
+                            diag_str += f", stderr_tail=[{' | '.join(ffmpeg_stderr[-2:])}]"
                         error_msg = (
                             f"Incomplete output: src={src_dur:.1f}s, out={out_dur:.1f}s, "
                             f"diff={src_dur - out_dur:.1f}s > threshold={self.duration_threshold}s"
                         )
-                        self.logger.warning(f"Task {task_id}: {error_msg}")
+                        self.logger.warning(f"Task {task_id}: {error_msg} | diag: {diag_str}")
                         Path(output_path).unlink(missing_ok=True)
                         self.update_task_status(task_id, 'failed', error_message=error_msg)
                         self.processing_progress['tasks_failed'] += 1
