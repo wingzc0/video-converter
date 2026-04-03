@@ -488,6 +488,32 @@ sudo sysctl -p
 
 ---
 
+## 已修正的技術問題
+
+### ffmpeg 在 Daemon 環境下誤讀 stdin 提早退出
+
+**症狀：** 轉檔以 rc=0 正常結束、有完整的 `[libx264] kb/s:XXX` 統計，但輸出時長遠短於來源，且每個任務的停止點不固定。
+
+**根本原因：**
+
+`python-daemon` 的 `DaemonContext` 會將 daemon 的 stdin 設為 `/dev/null`。ffmpeg 子行程繼承此 `/dev/null` 作為 fd 0，但 ffmpeg 啟動時會內部關閉 fd 0（stdin），隨後開啟來源影片檔案，此時 `open()` 取得最小可用描述符——正好是 fd 0。沒有 `-nostdin` 的情況下，ffmpeg 會定期從 fd 0 讀取鍵盤指令；讀到來源檔案的二進位資料中的 `q`（0x71）位元組時，ffmpeg 以為使用者按下了 `q`，觸發優雅退出並以 rc=0 結束。
+
+**修正（`e0e9057`）：** 在 ffmpeg 指令加入 `-nostdin` 旗標，完全停用鍵盤互動讀取。
+
+---
+
+### Stall Timeout 誤判導致長時間轉檔被強制終止
+
+**症狀：** 轉檔時間超過 1200 秒（`FFMPEG_STALL_TIMEOUT`）的任務被標記為 `ffmpeg stall timeout`，即使 ffmpeg 仍在正常運作。
+
+**根本原因：**
+
+ffmpeg 的 progress 訊息以 `\r`（carriage return）結尾，而非 `\n`。Python 的 `readline()` 在二進位模式下只辨識 `\n` 作為行尾，因此所有 `\r` 結尾的 progress 資料都會累積在緩衝區，直到最終出現 `\n` 的統計行（如 `[libx264] kb/s:XXX\n`）才一次返回。對於 60 分鐘以上的轉檔，`readline()` 阻塞超過 1200 秒，stall 偵測機制誤判為卡住並強制終止。
+
+**修正（`3e8e359`）：** 以 `select()` + `os.read(4096)` 非阻塞讀取取代 `readline()`，同時支援 `\r` 與 `\n` 分行。每次解析到 `time=` 即更新 `last_progress_time`，stall 偵測僅在 ffmpeg 真正停止輸出 progress 時才觸發。同時加入 progress callback 節流（每 1% 或每 5 秒才觸發），避免長時間轉檔產生大量不必要的 DB 寫入。
+
+---
+
 ## 已知限制
 
 ### 輸出路徑命名衝突
