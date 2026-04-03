@@ -24,6 +24,13 @@ def _make_process_daemon(**env_overrides):
         'MAX_RETRIES': '3',
         'RETRY_INTERVAL_CYCLES': '10',
         'STALE_HOURS': '1',
+        # 明確指定 log/pid/status 檔路徑到可寫入的 /tmp，
+        # 避免 patch.dict 還原 env 後 load_dotenv() 的效果消失，
+        # 導致後續建立的 daemon 嘗試在 /var/log 建目錄而 PermissionError
+        'PROCESS_DAEMON_LOG_FILE': '/tmp/test_process_daemon.log',
+        'PROCESS_DAEMON_ERROR_LOG_FILE': '/tmp/test_process_daemon_error.log',
+        'PROCESS_DAEMON_PID_FILE': '/tmp/test_process_daemon.pid',
+        'PROCESS_DAEMON_STATUS_FILE': '/tmp/test_process_daemon_status.json',
     }
     env.update(env_overrides)
     with patch.dict('os.environ', env):

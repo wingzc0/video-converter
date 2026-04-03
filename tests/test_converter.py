@@ -128,13 +128,33 @@ class TestGetVideoDuration(unittest.TestCase):
 class TestConvertTo480p(unittest.TestCase):
     """convert_to_480p() 使用 mock subprocess.Popen"""
 
+    def setUp(self):
+        self._fds_to_close = []
+
+    def tearDown(self):
+        for fd in self._fds_to_close:
+            try:
+                import os as _os
+                _os.close(fd)
+            except OSError:
+                pass
+
     def _make_mock_process(self, stderr_lines=None, returncode=0):
-        """建立模擬的 subprocess.Popen 物件"""
+        """建立模擬的 subprocess.Popen 物件，使用真實 pipe fd 供 select()/os.read() 使用"""
+        import os as _os
         mock_proc = MagicMock()
         mock_proc.returncode = returncode
         mock_proc.wait.return_value = returncode
-        lines = [line.encode() for line in (stderr_lines or [])] + [b'']
-        mock_proc.stderr.readline.side_effect = lines
+        mock_proc.poll.return_value = returncode  # 已結束，poll() 不回傳 None
+
+        r_fd, w_fd = _os.pipe()
+        self._fds_to_close.append(r_fd)
+
+        data = b''.join(line.encode() + b'\n' for line in (stderr_lines or []))
+        _os.write(w_fd, data)
+        _os.close(w_fd)  # 關閉寫端，讓 select() 看到 EOF
+
+        mock_proc.stderr.fileno.return_value = r_fd
         return mock_proc
 
     @patch('converter.get_video_duration', return_value=100.0)
@@ -210,11 +230,19 @@ class TestConvertTo480p(unittest.TestCase):
     @patch('converter.subprocess.Popen')
     def test_unicode_error_kills_process(self, mock_popen, _):
         """非 UTF-8 字元不應讓 ffmpeg 成為孤兒（errors='ignore' 保護）"""
+        import os as _os
         mock_proc = MagicMock()
         mock_proc.wait.return_value = 0
-        # 包含非 UTF-8 bytes，但 errors='ignore' 應能正常處理
-        mock_proc.stderr.readline.side_effect = [b'\xa3\xb4 time=00:00:10.00', b'']
+        mock_proc.returncode = 0
+        mock_proc.poll.return_value = 0
+
+        r_fd, w_fd = _os.pipe()
+        self._fds_to_close.append(r_fd)
+        _os.write(w_fd, b'\xa3\xb4 time=00:00:10.00\n')  # 無效 UTF-8 bytes
+        _os.close(w_fd)
+        mock_proc.stderr.fileno.return_value = r_fd
         mock_popen.return_value = mock_proc
+
         success, error = convert_to_480p('/input.mp4', '/output.mp4')
         self.assertTrue(success)
 
@@ -222,22 +250,20 @@ class TestConvertTo480p(unittest.TestCase):
     @patch('converter.subprocess.Popen')
     def test_stall_timeout_kills_ffmpeg(self, mock_popen, _):
         """stall_timeout 超時後應殺掉 ffmpeg 並回傳 (False, <reason>)"""
-        import threading as _threading
+        import os as _os
+        r_fd, w_fd = _os.pipe()
+        self._fds_to_close.append(r_fd)
 
         mock_proc = MagicMock()
-        # stderr.readline 永遠阻塞，直到 kill() 被呼叫後才回傳空字串
-        kill_event = _threading.Event()
-
-        def _blocking_readline():
-            kill_event.wait(timeout=5)
-            return b''
-
-        mock_proc.stderr.readline.side_effect = _blocking_readline
-        mock_proc.poll.return_value = None
+        mock_proc.stderr.fileno.return_value = r_fd
+        mock_proc.poll.return_value = None  # 持續運行中
         mock_proc.wait.return_value = -9
 
         def _do_kill():
-            kill_event.set()
+            try:
+                _os.close(w_fd)  # 關閉寫端 → r_fd 得到 EOF，select() 立即返回
+            except OSError:
+                pass
             mock_proc.poll.return_value = -9
 
         mock_proc.kill.side_effect = _do_kill
@@ -249,6 +275,45 @@ class TestConvertTo480p(unittest.TestCase):
         )
         self.assertFalse(success)
         self.assertIn('stall', error.lower())
+
+    @patch('converter.get_video_duration', return_value=100.0)
+    @patch('converter.subprocess.Popen')
+    def test_nostdin_in_ffmpeg_command(self, mock_popen, _):
+        """-nostdin 旗標應包含在 ffmpeg 指令中，防止 daemon 環境誤讀 stdin"""
+        mock_popen.return_value = self._make_mock_process(returncode=0)
+        convert_to_480p('/input.mp4', '/output.mp4')
+        cmd = mock_popen.call_args[0][0]
+        self.assertIn('-nostdin', cmd)
+
+    @patch('converter.get_video_duration', return_value=100.0)
+    @patch('converter.subprocess.Popen')
+    def test_carriage_return_progress_lines_parsed(self, mock_popen, _):
+        """以 \\r 結尾的 ffmpeg progress 行（與 \\n 混合）應正確解析 time= 欄位"""
+        import os as _os
+        mock_proc = MagicMock()
+        mock_proc.wait.return_value = 0
+        mock_proc.returncode = 0
+        mock_proc.poll.return_value = 0
+
+        r_fd, w_fd = _os.pipe()
+        self._fds_to_close.append(r_fd)
+        # ffmpeg 實際輸出：progress 行以 \r 結尾，最終統計行以 \n 結尾
+        data = (
+            b'frame=  5 fps=25 time=00:00:30.00 bitrate=500\r'
+            b'frame= 10 fps=25 time=00:01:00.00 bitrate=500\r'
+            b'[libx264] kb/s:500\n'
+        )
+        _os.write(w_fd, data)
+        _os.close(w_fd)
+        mock_proc.stderr.fileno.return_value = r_fd
+        mock_popen.return_value = mock_proc
+
+        callback = MagicMock()
+        success, error = convert_to_480p('/input.mp4', '/output.mp4', progress_callback=callback)
+        self.assertTrue(success)
+        self.assertGreater(callback.call_count, 0)
+        last_progress = callback.call_args_list[-1][0][0]
+        self.assertAlmostEqual(last_progress, 60.0, delta=1.0)
 
 
 class TestComputeOutputName(unittest.TestCase):
