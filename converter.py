@@ -1,6 +1,7 @@
 import subprocess
 import json
 import os
+import select
 import threading
 from pathlib import Path
 import time
@@ -144,35 +145,67 @@ def convert_to_480p(input_path, output_path, progress_callback=None,
 
         current_time = 0
         stderr_tail = []  # 收集 ffmpeg stderr 最後幾行，失敗時用於診斷
-        # FFmpeg 將進度資訊寫入 stderr 而非 stdout；
-        # 逐行讀取 stderr 以解析 time= 欄位，當 readline() 回傳空字串表示子程序輸出已結束
+        # FFmpeg 進度資訊以 '\r' 結尾寫入 stderr（而非 '\n'），
+        # 使用 select() + os.read() 以支援 '\r' 和 '\n' 兩種行結尾，
+        # 使 last_progress_time 在每次進度更新（約每 200ms）時都能即時更新，
+        # 避免 stall timeout 在長轉檔過程中因長期等不到 '\n' 而誤判 ffmpeg 卡住。
         return_code = None  # 確保 except 後若有程式碼變動時不會出現 NameError
+        # 限制 progress_callback 頻率：最快每 5 秒或進度差達 1% 才回呼一次，
+        # 避免 \r-aware 讀取模式對 DB 產生過高頻率的寫入
+        _last_cb_time = start_time
+        _last_cb_progress = 0.0
         try:
+            stderr_fd = process.stderr.fileno()
+            _buf = b''
             while True:
-                line = process.stderr.readline()
-                if not line:
+                # select() 等待 stderr 有資料，1 秒 timeout 以便 watchdog 能即時 kill
+                try:
+                    rlist, _, _ = select.select([stderr_fd], [], [], 1.0)
+                except (select.error, ValueError):
                     break
-                # 忽略無法解碼的字元，不中斷進度讀取
-                line = line.decode('utf-8', errors='ignore')
-                
-                # 保留最後 20 行 stderr 供失敗診斷，進度行（frame=/fps=/time= 開頭）通常不含有效錯誤訊息
-                stripped = line.strip()
-                if stripped and not stripped.startswith('frame='):
-                    stderr_tail.append(stripped)
-                    if len(stderr_tail) > 20:
-                        stderr_tail.pop(0)
+                if rlist:
+                    chunk = os.read(stderr_fd, 4096)
+                    if not chunk:  # EOF：ffmpeg 已結束
+                        break
+                    _buf += chunk
+                elif process.poll() is not None:
+                    # 沒有新資料且程序已結束
+                    break
 
-                # 解析FFmpeg輸出以追蹤進度
-                if 'time=' in line:
-                    time_str = line.split('time=')[1].split(' ')[0].strip()
-                    current_time = parse_time_to_seconds(time_str)
-                    last_progress_time[0] = time.monotonic()
-                    
-                    if duration > 0 and progress_callback:
-                        # 進度最高上限 99.9%，100% 保留給 process_task 確認輸出檔案存在後才設定，
-                        # 避免 FFmpeg 回傳成功但輸出檔案尚未完整寫入時就顯示 100%
-                        progress = min(99.9, (current_time / duration) * 100)  # 保留100%給完成狀態
-                        progress_callback(progress)
+                # 以 '\r' 或 '\n' 分割並逐行處理（ffmpeg 進度行以 '\r' 結尾）
+                while _buf:
+                    cr = _buf.find(b'\r')
+                    lf = _buf.find(b'\n')
+                    if cr < 0 and lf < 0:
+                        break  # 尚無完整的一行
+                    pos = min(x for x in (cr, lf) if x >= 0)
+                    line_bytes = _buf[:pos]
+                    _buf = _buf[pos + 1:]
+
+                    line = line_bytes.decode('utf-8', errors='ignore')
+                    stripped = line.strip()
+
+                    # 保留最後 20 行非進度行供失敗診斷
+                    if stripped and not stripped.startswith('frame='):
+                        stderr_tail.append(stripped)
+                        if len(stderr_tail) > 20:
+                            stderr_tail.pop(0)
+
+                    # 解析 time= 欄位以追蹤進度並重設 stall timer
+                    if 'time=' in line:
+                        time_str = line.split('time=')[1].split(' ')[0].strip()
+                        current_time = parse_time_to_seconds(time_str)
+                        last_progress_time[0] = time.monotonic()
+
+                        if duration > 0 and progress_callback:
+                            progress = min(99.9, (current_time / duration) * 100)
+                            now = time.monotonic()
+                            # 節流：進度差 ≥ 1% 或距上次回呼 ≥ 5 秒才呼叫
+                            if (abs(progress - _last_cb_progress) >= 1.0 or
+                                    now - _last_cb_time >= 5.0):
+                                progress_callback(progress)
+                                _last_cb_time = now
+                                _last_cb_progress = progress
             return_code = process.wait()
         except Exception as e:
             print(f"Conversion error: {e}")
