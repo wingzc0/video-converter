@@ -346,12 +346,13 @@ python monitor_daemons.py -c
 | 指令 | 說明 |
 |---|---|
 | `--show-dirs` | 預覽輸入目錄結構（含忽略目錄標示） |
-| `--stats` | 顯示資料庫任務統計（總數、各狀態數量、平均耗時、失敗詳情） |
+| `--stats` | 顯示資料庫任務統計（現在時間、各狀態數量、目前轉檔中任務清單、平均耗時、最近失敗詳情） |
 | `--retry-failed` | 手動將失敗任務重置為 pending（僅 retry_count < max_retries） |
 | `--reset-maxed-failed` | 手動重設已達重試上限的失敗任務為 pending（retry_count 歸零） |
 | `--max-retries N` | 重試次數上限（預設 3，搭配 --retry-failed / --reset-maxed-failed） |
 | `--cleanup-stale` | 手動將卡住的 processing 任務標為 failed |
 | `--stale-hours N` | 過時閾值（小時，預設 24，搭配 --cleanup-stale 使用） |
+| `--failed-limit N` | `--stats` 時印出最近失敗任務的數量（預設 5；設為 0 不印） |
 | `--kill-stale-ffmpeg` | Kill 不在 process daemon 子孫樹下且 source file 有 DB 記錄的孤兒 ffmpeg 程序 |
 | `--dry-run` | 僅顯示會執行的操作，不實際寫入（支援 `--kill-stale-ffmpeg`、`--reset-task`、`--add-file`） |
 | `--reset-task ID [ID ...]` | 將指定任務重設為 pending（retry_count 歸零、清除錯誤訊息） |
@@ -363,8 +364,14 @@ python monitor_daemons.py -c
 # 預覽目錄結構（診斷忽略目錄設定）
 python3 conv_admin.py --show-dirs
 
-# 查看任務統計
+# 查看任務統計（含現在時間、目前轉檔中任務）
 python3 conv_admin.py --stats
+
+# 查看任務統計，顯示最近 10 筆失敗任務
+python3 conv_admin.py --stats --failed-limit 10
+
+# 查看任務統計，不顯示失敗任務清單
+python3 conv_admin.py --stats --failed-limit 0
 
 # 手動重試失敗任務（retry_count < 3）
 python3 conv_admin.py --retry-failed
