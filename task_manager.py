@@ -145,6 +145,20 @@ class TaskRepository:
             self._logger.error(f"Error querying maxed failed tasks: {str(e)}")
             return []
 
+    def get_processing_tasks(self):
+        """回傳目前正在轉檔（status='processing'）的任務清單，依 start_time 升冪排列。"""
+        try:
+            return db_manager.execute_query(
+                """SELECT id, input_path, start_time, retry_count
+                   FROM conversion_tasks
+                   WHERE status='processing'
+                   ORDER BY start_time ASC""",
+                fetch=True
+            )
+        except Exception as e:
+            self._logger.error(f"Error getting processing tasks: {str(e)}")
+            return []
+
     def get_recent_failed_tasks(self, limit=5):
         """回傳最近失敗任務清單"""
         try:

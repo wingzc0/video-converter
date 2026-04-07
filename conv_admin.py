@@ -8,6 +8,7 @@ bcvnas-converter 資料庫診斷與維護工具
 用法:
   python3 conv_admin.py --show-dirs
   python3 conv_admin.py --stats
+  python3 conv_admin.py --stats --failed-limit 10
   python3 conv_admin.py --retry-failed
   python3 conv_admin.py --cleanup-stale [--stale-hours N]
   python3 conv_admin.py --reset-maxed-failed [--max-retries N]
@@ -18,6 +19,7 @@ bcvnas-converter 資料庫診斷與維護工具
 import os
 import signal
 import argparse
+from datetime import datetime
 from pathlib import Path
 
 from task_manager import TaskRepository
@@ -103,13 +105,19 @@ def cmd_show_dirs():
 # Task statistics
 # ---------------------------------------------------------------------------
 
-def cmd_stats():
+def cmd_stats(failed_limit=5):
+    """印出任務統計、目前正在轉檔的任務清單，以及最近 failed_limit 筆失敗任務。
+
+    Args:
+        failed_limit: 要印出的最近失敗任務數量（0 表示不印，預設 5）。
+    """
     task_repo = TaskRepository()
     s = task_repo.get_task_statistics()
     if not s:
         print("No data in conversion_tasks.")
         return
-    print("=== Task Statistics ===")
+
+    print(f"=== Task Statistics  ({datetime.now().strftime('%Y-%m-%d %H:%M:%S')}) ===")
     print(f"  Total      : {s['total']}")
     print(f"  Pending    : {s['pending']}")
     print(f"  Processing : {s['processing']}")
@@ -119,9 +127,27 @@ def cmd_stats():
     if s['avg_duration']:
         print(f"  Avg time   : {float(s['avg_duration']) / 60:.1f} min")
 
-    if s['failed'] and int(s['failed']) > 0:
-        print("\n  Recent failed tasks (up to 5):")
-        for t in task_repo.get_recent_failed_tasks(5):
+    processing_tasks = task_repo.get_processing_tasks()
+    if processing_tasks:
+        print(f"\n  Currently processing ({len(processing_tasks)}):")
+        now = datetime.now()
+        for t in processing_tasks:
+            name = Path(t['input_path']).name
+            start = t['start_time']
+            if start:
+                try:
+                    start_dt = datetime.fromisoformat(str(start))
+                    elapsed = now - start_dt
+                    elapsed_str = f"elapsed {int(elapsed.total_seconds() // 60)}m{int(elapsed.total_seconds() % 60):02d}s"
+                except (ValueError, TypeError):
+                    elapsed_str = f"start={start}"
+            else:
+                elapsed_str = "start=unknown"
+            print(f"    [{t['id']}] {name}  retries={t['retry_count']}  {elapsed_str}")
+
+    if failed_limit > 0 and s['failed'] and int(s['failed']) > 0:
+        print(f"\n  Recent failed tasks (up to {failed_limit}):")
+        for t in task_repo.get_recent_failed_tasks(failed_limit):
             print(f"    [{t['id']}] {Path(t['input_path']).name}")
             print(f"          error={t['error_message']}  retries={t['retry_count']}  at={t['updated_at']}")
 
@@ -395,6 +421,8 @@ def parse_arguments():
 範例:
   python3 conv_admin.py --show-dirs
   python3 conv_admin.py --stats
+  python3 conv_admin.py --stats --failed-limit 10
+  python3 conv_admin.py --stats --failed-limit 0
   python3 conv_admin.py --retry-failed
   python3 conv_admin.py --cleanup-stale --stale-hours 2
   python3 conv_admin.py --reset-maxed-failed
@@ -425,6 +453,8 @@ def parse_arguments():
                         help='過時任務的時間閾值（小時，預設 24，僅用於 --cleanup-stale）')
     parser.add_argument('--max-retries', type=int, default=3,
                         help='最大重試次數（預設 3，僅用於 --retry-failed）')
+    parser.add_argument('--failed-limit', type=int, default=5,
+                        help='--stats 時印出最近失敗任務的數量（預設 5；設為 0 不印）')
     parser.add_argument('--dry-run', action='store_true',
                         help='僅顯示會執行的操作，不實際寫入（支援 --kill-stale-ffmpeg、--reset-task、--add-file）')
     return parser.parse_args()
@@ -436,7 +466,7 @@ def main():
     if args.show_dirs:
         cmd_show_dirs()
     elif args.stats:
-        cmd_stats()
+        cmd_stats(args.failed_limit)
     elif args.retry_failed:
         cmd_retry_failed(args.max_retries)
     elif args.cleanup_stale:

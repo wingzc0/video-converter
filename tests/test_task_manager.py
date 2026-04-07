@@ -272,6 +272,41 @@ class TestGetRecentFailedTasks(unittest.TestCase):
 
 
 # ---------------------------------------------------------------------------
+# get_processing_tasks
+# ---------------------------------------------------------------------------
+
+class TestGetProcessingTasks(unittest.TestCase):
+
+    @patch('task_manager.db_manager')
+    def test_returns_processing_list(self, mock_db):
+        mock_db.execute_query.return_value = [
+            {'id': 5, 'input_path': '/a.mp4', 'start_time': '2026-01-01 00:00:00', 'retry_count': 0},
+        ]
+        result = _repo().get_processing_tasks()
+        self.assertEqual(len(result), 1)
+        self.assertEqual(result[0]['id'], 5)
+
+    @patch('task_manager.db_manager')
+    def test_query_filters_processing_status(self, mock_db):
+        mock_db.execute_query.return_value = []
+        _repo().get_processing_tasks()
+        query = mock_db.execute_query.call_args[0][0]
+        self.assertIn("status='processing'", query)
+
+    @patch('task_manager.db_manager')
+    def test_query_orders_by_start_time_asc(self, mock_db):
+        mock_db.execute_query.return_value = []
+        _repo().get_processing_tasks()
+        query = mock_db.execute_query.call_args[0][0]
+        self.assertIn('start_time ASC', query)
+
+    @patch('task_manager.db_manager')
+    def test_db_error_returns_empty_list(self, mock_db):
+        mock_db.execute_query.side_effect = Exception('err')
+        self.assertEqual(_repo().get_processing_tasks(), [])
+
+
+# ---------------------------------------------------------------------------
 # reset_tasks_to_pending
 # ---------------------------------------------------------------------------
 

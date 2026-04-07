@@ -486,5 +486,106 @@ class TestDryRunAddFile(unittest.TestCase):
         mock_info.assert_not_called()
 
 
+# ---------------------------------------------------------------------------
+# cmd_stats
+# ---------------------------------------------------------------------------
+
+class TestCmdStats(unittest.TestCase):
+    """cmd_stats() — 顯示任務統計、目前轉檔中任務與最近失敗任務"""
+
+    def _make_stats(self, total=10, pending=3, processing=2, completed=4, failed=1,
+                    retried=0, avg_duration=120):
+        return {
+            'total': total, 'pending': pending, 'processing': processing,
+            'completed': completed, 'failed': failed,
+            'retried': retried, 'avg_duration': avg_duration,
+        }
+
+    def _setup_mock_db(self, mock_db, stats, processing_tasks=None, failed_tasks=None):
+        """設定 mock_db：dialect 回傳佔位字串；execute_query 依序回傳各查詢結果。"""
+        mock_db.dialect.timestampdiff_seconds.return_value = '0'
+        processing_tasks = processing_tasks if processing_tasks is not None else []
+        failed_tasks = failed_tasks if failed_tasks is not None else []
+        mock_db.execute_query.side_effect = [[stats], processing_tasks, failed_tasks]
+
+    @patch('task_manager.db_manager')
+    def test_prints_current_datetime(self, mock_db):
+        """標題列應包含當前日期時間"""
+        self._setup_mock_db(mock_db, self._make_stats())
+        printed = []
+        with patch('builtins.print', side_effect=lambda *a, **kw: printed.append(' '.join(str(x) for x in a))):
+            from conv_admin import cmd_stats
+            cmd_stats()
+        header = next((l for l in printed if 'Task Statistics' in l), '')
+        import re
+        self.assertTrue(re.search(r'\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}', header))
+
+    @patch('task_manager.db_manager')
+    def test_prints_processing_tasks(self, mock_db):
+        """目前轉檔中的任務資訊應被印出"""
+        processing = [
+            {'id': 7, 'input_path': '/mnt/video.mp4',
+             'start_time': '2026-01-01 00:00:00', 'retry_count': 0},
+        ]
+        self._setup_mock_db(mock_db, self._make_stats(processing=1), processing_tasks=processing)
+        printed = []
+        with patch('builtins.print', side_effect=lambda *a, **kw: printed.append(' '.join(str(x) for x in a))):
+            from conv_admin import cmd_stats
+            cmd_stats()
+        self.assertTrue(any('video.mp4' in l for l in printed))
+        self.assertTrue(any('Currently processing' in l for l in printed))
+
+    @patch('task_manager.db_manager')
+    def test_no_processing_section_when_empty(self, mock_db):
+        """無轉檔中任務時不應印出 Currently processing 段落"""
+        self._setup_mock_db(mock_db, self._make_stats(processing=0), processing_tasks=[])
+        printed = []
+        with patch('builtins.print', side_effect=lambda *a, **kw: printed.append(' '.join(str(x) for x in a))):
+            from conv_admin import cmd_stats
+            cmd_stats()
+        self.assertFalse(any('Currently processing' in l for l in printed))
+
+    @patch('task_manager.db_manager')
+    def test_failed_limit_controls_recent_failed_count(self, mock_db):
+        """failed_limit 參數應傳遞給 get_recent_failed_tasks()"""
+        failed_tasks = [
+            {'id': i, 'input_path': f'/f{i}.mp4', 'error_message': 'err',
+             'retry_count': 1, 'updated_at': '2026-01-01'}
+            for i in range(3)
+        ]
+        self._setup_mock_db(mock_db, self._make_stats(failed=3), failed_tasks=failed_tasks)
+        with patch('builtins.print'):
+            from conv_admin import cmd_stats
+            cmd_stats(failed_limit=3)
+        # 第 3 次 execute_query 呼叫（get_recent_failed_tasks）應帶 limit=3
+        calls = mock_db.execute_query.call_args_list
+        last_params = calls[-1][0][1]
+        self.assertIn(3, last_params)
+
+    @patch('task_manager.db_manager')
+    def test_failed_limit_zero_skips_failed_section(self, mock_db):
+        """failed_limit=0 時不應查詢或印出失敗任務"""
+        mock_db.dialect.timestampdiff_seconds.return_value = '0'
+        mock_db.execute_query.side_effect = [[self._make_stats(failed=5)], []]
+        printed = []
+        with patch('builtins.print', side_effect=lambda *a, **kw: printed.append(' '.join(str(x) for x in a))):
+            from conv_admin import cmd_stats
+            cmd_stats(failed_limit=0)
+        self.assertFalse(any('Recent failed' in l for l in printed))
+        # 只應有 2 次 execute_query：統計 + 轉檔中任務；不應有第 3 次
+        self.assertEqual(mock_db.execute_query.call_count, 2)
+
+    @patch('task_manager.db_manager')
+    def test_no_data_prints_message(self, mock_db):
+        """get_task_statistics 回傳 None 時應印出 No data 訊息"""
+        mock_db.dialect.timestampdiff_seconds.return_value = '0'
+        mock_db.execute_query.return_value = []
+        printed = []
+        with patch('builtins.print', side_effect=lambda *a, **kw: printed.append(' '.join(str(x) for x in a))):
+            from conv_admin import cmd_stats
+            cmd_stats()
+        self.assertTrue(any('No data' in l for l in printed))
+
+
 if __name__ == '__main__':
     unittest.main()
