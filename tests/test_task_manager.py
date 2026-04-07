@@ -433,5 +433,205 @@ class TestFindOrphanedFfmpegCandidates(unittest.TestCase):
         self.assertEqual(result, [])
 
 
+# ---------------------------------------------------------------------------
+# SQLite integration tests — use a real temporary SQLite database
+# ---------------------------------------------------------------------------
+
+class TestTaskRepositorySQLite(unittest.TestCase):
+    """TaskRepository 整合測試：使用真實的 SQLite 暫存資料庫。
+
+    透過 tempfile 建立獨立的 SQLite 檔案，確保 init_db 與 db_manager
+    操作的是同一個資料庫，完整測試 SQL 方言相容性。
+    """
+
+    def setUp(self):
+        import os
+        import tempfile
+        self._tmp = tempfile.NamedTemporaryFile(suffix='.db', delete=False)
+        self._tmp.close()
+        self._db_path = self._tmp.name
+
+        self._env_backup = {
+            'DB_TYPE': os.getenv('DB_TYPE'),
+            'DB_PATH': os.getenv('DB_PATH'),
+        }
+        os.environ['DB_TYPE'] = 'sqlite'
+        os.environ['DB_PATH'] = self._db_path
+
+        # 重載模組，確保使用新的環境變數
+        for mod in ('db_manager', 'task_manager', 'init_db'):
+            sys.modules.pop(mod, None)
+
+        from init_db import init_database
+        init_database()
+
+        # 重設 db_manager（init_db 建立的連線與 db_manager 使用同一個檔案）
+        sys.modules.pop('db_manager', None)
+        sys.modules.pop('task_manager', None)
+
+        from task_manager import TaskRepository as TR
+        self.TaskRepository = TR
+
+    def tearDown(self):
+        import os
+        for key, value in self._env_backup.items():
+            if value is None:
+                os.environ.pop(key, None)
+            else:
+                os.environ[key] = value
+        for mod in ('db_manager', 'task_manager', 'init_db'):
+            sys.modules.pop(mod, None)
+        try:
+            os.unlink(self._db_path)
+        except OSError:
+            pass
+
+    def _repo(self):
+        return self.TaskRepository()
+
+    def _insert_task(self, input_path='/input/video.mp4', output_path='/output/video.mp4',
+                     status='pending', retry_count=0):
+        """輔助方法：直接插入一筆測試任務"""
+        import db_manager as dm
+        dm.db_manager.execute_query(
+            "INSERT INTO conversion_tasks (input_path, output_path, status, retry_count) "
+            "VALUES (%s, %s, %s, %s)",
+            params=(input_path, output_path, status, retry_count),
+        )
+        rows = dm.db_manager.execute_query(
+            "SELECT id FROM conversion_tasks WHERE input_path=%s", params=(input_path,), fetch=True
+        )
+        return rows[0]['id']
+
+    def test_add_task(self):
+        """測試 insert_task 新增任務"""
+        repo = self._repo()
+        repo.insert_task('/in/a.mp4', '/out/a.mp4', '1920x1080')
+        import db_manager as dm
+        rows = dm.db_manager.execute_query(
+            "SELECT * FROM conversion_tasks WHERE input_path='/in/a.mp4'", fetch=True
+        )
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(rows[0]['status'], 'pending')
+        self.assertEqual(rows[0]['source_resolution'], '1920x1080')
+
+    def test_add_task_duplicate_ignored(self):
+        """測試重複 insert_task 不拋出例外（INSERT OR IGNORE）"""
+        repo = self._repo()
+        repo.insert_task('/in/dup.mp4', '/out/dup.mp4', '1280x720')
+        repo.insert_task('/in/dup.mp4', '/out/dup.mp4', '1280x720')  # 重複應被 IGNORE
+        import db_manager as dm
+        rows = dm.db_manager.execute_query(
+            "SELECT * FROM conversion_tasks WHERE input_path='/in/dup.mp4'", fetch=True
+        )
+        self.assertEqual(len(rows), 1)
+
+    def test_get_pending_tasks(self):
+        """測試 get_pending_tasks 回傳 pending 任務"""
+        self._insert_task('/in/p1.mp4', '/out/p1.mp4', status='pending')
+        self._insert_task('/in/p2.mp4', '/out/p2.mp4', status='completed')
+        repo = self._repo()
+        result = repo.get_pending_tasks(limit=10)
+        paths = [r['input_path'] for r in result]
+        self.assertIn('/in/p1.mp4', paths)
+        self.assertNotIn('/in/p2.mp4', paths)
+
+    def test_acquire_task_lock(self):
+        """測試 acquire_task_lock 正確設定 is_processing"""
+        task_id = self._insert_task('/in/lock.mp4', '/out/lock.mp4')
+        repo = self._repo()
+        success = repo.acquire_task_lock(task_id, 'worker-1')
+        self.assertTrue(success)
+        import db_manager as dm
+        rows = dm.db_manager.execute_query(
+            "SELECT is_processing FROM conversion_tasks WHERE id=%s", params=(task_id,), fetch=True
+        )
+        self.assertEqual(rows[0]['is_processing'], 1)
+
+    def test_acquire_task_lock_already_locked(self):
+        """測試已上鎖的任務無法再次取得鎖"""
+        task_id = self._insert_task('/in/lock2.mp4', '/out/lock2.mp4')
+        repo = self._repo()
+        repo.acquire_task_lock(task_id, 'worker-1')
+        success2 = repo.acquire_task_lock(task_id, 'worker-2')
+        self.assertFalse(success2)
+
+    def test_update_task_status(self):
+        """測試 update_task_status 更新狀態"""
+        task_id = self._insert_task('/in/upd.mp4', '/out/upd.mp4')
+        repo = self._repo()
+        repo.update_task_status(task_id, 'processing')
+        import db_manager as dm
+        rows = dm.db_manager.execute_query(
+            "SELECT status FROM conversion_tasks WHERE id=%s", params=(task_id,), fetch=True
+        )
+        self.assertEqual(rows[0]['status'], 'processing')
+
+    def test_complete_task(self):
+        """測試 update_task_status completed 將狀態設為 completed 並清除 is_processing"""
+        task_id = self._insert_task('/in/done.mp4', '/out/done.mp4', status='processing')
+        repo = self._repo()
+        repo.update_task_status(task_id, 'completed')
+        import db_manager as dm
+        rows = dm.db_manager.execute_query(
+            "SELECT status, is_processing FROM conversion_tasks WHERE id=%s",
+            params=(task_id,), fetch=True
+        )
+        self.assertEqual(rows[0]['status'], 'completed')
+        self.assertEqual(rows[0]['is_processing'], 0)
+
+    def test_fail_task(self):
+        """測試 update_task_status failed 將狀態設為 failed 並記錄錯誤訊息"""
+        task_id = self._insert_task('/in/fail.mp4', '/out/fail.mp4', status='processing')
+        repo = self._repo()
+        repo.update_task_status(task_id, 'failed', error_message='ffmpeg error')
+        import db_manager as dm
+        rows = dm.db_manager.execute_query(
+            "SELECT status, error_message, is_processing FROM conversion_tasks WHERE id=%s",
+            params=(task_id,), fetch=True
+        )
+        self.assertEqual(rows[0]['status'], 'failed')
+        self.assertIn('ffmpeg error', rows[0]['error_message'])
+        self.assertEqual(rows[0]['is_processing'], 0)
+
+    def test_get_task_statistics(self):
+        """測試 get_task_statistics 回傳各狀態計數"""
+        self._insert_task('/in/s1.mp4', '/out/s1.mp4', status='pending')
+        self._insert_task('/in/s2.mp4', '/out/s2.mp4', status='completed')
+        self._insert_task('/in/s3.mp4', '/out/s3.mp4', status='failed')
+        repo = self._repo()
+        stats = repo.get_task_statistics()
+        self.assertIsNotNone(stats)
+        self.assertIn('pending', stats)
+        self.assertGreaterEqual(stats['pending'], 1)
+        self.assertGreaterEqual(stats['completed'], 1)
+        self.assertGreaterEqual(stats['failed'], 1)
+
+    def test_retry_failed_tasks(self):
+        """測試 retry_failed_tasks 重設失敗任務為 pending"""
+        task_id = self._insert_task('/in/retry.mp4', '/out/retry.mp4', status='failed', retry_count=1)
+        repo = self._repo()
+        count = repo.retry_failed_tasks(max_retries=3)
+        import db_manager as dm
+        rows = dm.db_manager.execute_query(
+            "SELECT status FROM conversion_tasks WHERE id=%s", params=(task_id,), fetch=True
+        )
+        self.assertEqual(rows[0]['status'], 'pending')
+
+    def test_get_task_by_id(self):
+        """測試 get_task_by_id 回傳正確任務"""
+        task_id = self._insert_task('/in/byid.mp4', '/out/byid.mp4')
+        repo = self._repo()
+        task = repo.get_task_by_id(task_id)
+        self.assertIsNotNone(task)
+        self.assertEqual(task['input_path'], '/in/byid.mp4')
+
+    def test_get_task_by_id_not_found(self):
+        """測試 get_task_by_id 找不到時回傳 None"""
+        repo = self._repo()
+        task = repo.get_task_by_id(99999)
+        self.assertIsNone(task)
+
+
 if __name__ == '__main__':
     unittest.main()

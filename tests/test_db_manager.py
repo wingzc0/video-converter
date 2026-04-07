@@ -18,20 +18,24 @@ class TestDatabaseManager(unittest.TestCase):
         """設定測試環境"""
         # 重置環境變數
         self.env_backup = {
+            'DB_TYPE': os.getenv('DB_TYPE'),
             'DB_HOST': os.getenv('DB_HOST'),
             'DB_PORT': os.getenv('DB_PORT'),
             'DB_USER': os.getenv('DB_USER'),
             'DB_PASSWORD': os.getenv('DB_PASSWORD'),
             'DB_NAME': os.getenv('DB_NAME'),
+            'DB_PATH': os.getenv('DB_PATH'),
         }
         
         # 設定測試用的環境變數
+        os.environ['DB_TYPE'] = 'mariadb'
         os.environ['DB_HOST'] = 'localhost'
         os.environ['DB_PORT'] = '3306'
         os.environ['DB_USER'] = 'test_user'
         os.environ['DB_PASSWORD'] = 'test_password'
         os.environ['DB_NAME'] = 'test_db'
-        
+        os.environ.pop('DB_PATH', None)
+
         # 重新載入模組以使用新的環境變數
         if 'db_manager' in sys.modules:
             del sys.modules['db_manager']
@@ -51,7 +55,7 @@ class TestDatabaseManager(unittest.TestCase):
         if 'db_manager' in sys.modules:
             del sys.modules['db_manager']
 
-    @patch('db_manager.mysql.connector.pooling.MySQLConnectionPool')
+    @patch('db_manager.pooling.MySQLConnectionPool')
     def test_init_pool_success(self, mock_pool_class):
         """測試連接池初始化成功"""
         mock_pool = MagicMock()
@@ -76,7 +80,7 @@ class TestDatabaseManager(unittest.TestCase):
         self.assertEqual(call_kwargs['charset'], 'utf8mb4')
         self.assertEqual(call_kwargs['autocommit'], False)
 
-    @patch('db_manager.mysql.connector.pooling.MySQLConnectionPool')
+    @patch('db_manager.pooling.MySQLConnectionPool')
     def test_init_pool_failure(self, mock_pool_class):
         """測試連接池初始化失敗"""
         import mysql.connector
@@ -88,7 +92,7 @@ class TestDatabaseManager(unittest.TestCase):
         with self.assertRaises(mysql.connector.Error):
             db_manager._init_pool()
 
-    @patch('db_manager.mysql.connector.pooling.MySQLConnectionPool')
+    @patch('db_manager.pooling.MySQLConnectionPool')
     def test_get_connection_lazy_initialization(self, mock_pool_class):
         """測試連接的延遲初始化（首次呼叫 get_connection 時才建立連接池）"""
         mock_pool = MagicMock()
@@ -109,7 +113,7 @@ class TestDatabaseManager(unittest.TestCase):
         # 驗證連接已正確關閉
         mock_connection.close.assert_called()
 
-    @patch('db_manager.mysql.connector.pooling.MySQLConnectionPool')
+    @patch('db_manager.pooling.MySQLConnectionPool')
     def test_get_connection_rollback_on_error(self, mock_pool_class):
         """測試發生錯誤時自動 rollback"""
         import mysql.connector
@@ -129,7 +133,7 @@ class TestDatabaseManager(unittest.TestCase):
         # 驗證 rollback 被呼叫（至少一次）
         mock_connection.rollback.assert_called()
 
-    @patch('db_manager.mysql.connector.pooling.MySQLConnectionPool')
+    @patch('db_manager.pooling.MySQLConnectionPool')
     def test_execute_query_fetch_true(self, mock_pool_class):
         """測試 execute_query 與 fetch=True（SELECT 查詢）"""
         mock_pool = MagicMock()
@@ -154,7 +158,7 @@ class TestDatabaseManager(unittest.TestCase):
         mock_cursor.fetchall.assert_called_once()
         mock_connection.commit.assert_called()
 
-    @patch('db_manager.mysql.connector.pooling.MySQLConnectionPool')
+    @patch('db_manager.pooling.MySQLConnectionPool')
     def test_execute_query_fetch_false(self, mock_pool_class):
         """測試 execute_query 與 fetch=False（INSERT/UPDATE/DELETE）"""
         mock_pool = MagicMock()
@@ -184,7 +188,7 @@ class TestDatabaseManager(unittest.TestCase):
         )
         mock_connection.commit.assert_called()
 
-    @patch('db_manager.mysql.connector.pooling.MySQLConnectionPool')
+    @patch('db_manager.pooling.MySQLConnectionPool')
     def test_execute_query_rollback_on_error(self, mock_pool_class):
         """測試 execute_query 發生錯誤時 rollback"""
         import mysql.connector
@@ -207,7 +211,7 @@ class TestDatabaseManager(unittest.TestCase):
         # 驗證 rollback 被呼叫（至少一次）
         mock_connection.rollback.assert_called()
 
-    @patch('db_manager.mysql.connector.pooling.MySQLConnectionPool')
+    @patch('db_manager.pooling.MySQLConnectionPool')
     def test_execute_transaction_success(self, mock_pool_class):
         """測試 execute_transaction 成功執行多個 SQL"""
         mock_pool = MagicMock()
@@ -236,7 +240,7 @@ class TestDatabaseManager(unittest.TestCase):
         mock_connection.commit.assert_called_once()
         mock_connection.rollback.assert_not_called()
 
-    @patch('db_manager.mysql.connector.pooling.MySQLConnectionPool')
+    @patch('db_manager.pooling.MySQLConnectionPool')
     def test_execute_transaction_rollback_on_error(self, mock_pool_class):
         """測試 execute_transaction 發生錯誤時 rollback"""
         import mysql.connector
@@ -267,7 +271,7 @@ class TestDatabaseManager(unittest.TestCase):
         # commit 不應被呼叫
         mock_connection.commit.assert_not_called()
 
-    @patch('db_manager.mysql.connector.pooling.MySQLConnectionPool')
+    @patch('db_manager.pooling.MySQLConnectionPool')
     def test_health_check_success(self, mock_pool_class):
         """測試健康檢查成功"""
         mock_pool = MagicMock()
@@ -286,7 +290,7 @@ class TestDatabaseManager(unittest.TestCase):
         self.assertTrue(result)
         mock_cursor.execute.assert_called_with("SELECT 1")
 
-    @patch('db_manager.mysql.connector.pooling.MySQLConnectionPool')
+    @patch('db_manager.pooling.MySQLConnectionPool')
     def test_health_check_failure(self, mock_pool_class):
         """測試健康檢查失敗"""
         mock_pool = MagicMock()
@@ -298,7 +302,7 @@ class TestDatabaseManager(unittest.TestCase):
         
         self.assertFalse(result)
 
-    @patch('db_manager.mysql.connector.pooling.MySQLConnectionPool')
+    @patch('db_manager.pooling.MySQLConnectionPool')
     def test_get_cursor_dictionary_true(self, mock_pool_class):
         """測試 get_cursor 與 dictionary=True"""
         mock_pool = MagicMock()
@@ -320,7 +324,7 @@ class TestDatabaseManager(unittest.TestCase):
         # 驗證 cursor 已關閉
         mock_cursor.close.assert_called()
 
-    @patch('db_manager.mysql.connector.pooling.MySQLConnectionPool')
+    @patch('db_manager.pooling.MySQLConnectionPool')
     def test_get_cursor_dictionary_false(self, mock_pool_class):
         """測試 get_cursor 與 dictionary=False"""
         mock_pool = MagicMock()
@@ -341,12 +345,146 @@ class TestDatabaseManager(unittest.TestCase):
         mock_connection.cursor.assert_called_with(dictionary=False)
 
 
+class TestSQLiteDatabaseManager(unittest.TestCase):
+    """SQLite 後端 DatabaseManager 整合測試（使用 :memory: 資料庫）"""
+
+    def setUp(self):
+        """設定 SQLite 測試環境"""
+        self.env_backup = {
+            'DB_TYPE': os.getenv('DB_TYPE'),
+            'DB_PATH': os.getenv('DB_PATH'),
+        }
+        os.environ['DB_TYPE'] = 'sqlite'
+        os.environ['DB_PATH'] = ':memory:'
+        if 'db_manager' in sys.modules:
+            del sys.modules['db_manager']
+        from db_manager import DatabaseManager
+        self.db = DatabaseManager()
+        # 手動建立測試用資料表
+        conn = self.db._get_sqlite_conn()
+        conn.execute('''
+            CREATE TABLE IF NOT EXISTS test_table (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                name TEXT,
+                value INTEGER DEFAULT 0
+            )
+        ''')
+        conn.commit()
+
+    def tearDown(self):
+        for key, value in self.env_backup.items():
+            if value is None:
+                os.environ.pop(key, None)
+            else:
+                os.environ[key] = value
+        if 'db_manager' in sys.modules:
+            del sys.modules['db_manager']
+
+    def test_db_type_property(self):
+        """測試 db_type 回傳 sqlite"""
+        self.assertEqual(self.db.db_type, 'sqlite')
+
+    def test_to_sqlite_placeholder(self):
+        """測試 %s 佔位符轉換為 ?"""
+        result = self.db._to_sqlite("SELECT * FROM t WHERE id=%s AND name=%s")
+        self.assertEqual(result, "SELECT * FROM t WHERE id=? AND name=?")
+
+    def test_to_sqlite_insert_ignore(self):
+        """測試 INSERT IGNORE 轉換為 INSERT OR IGNORE"""
+        result = self.db._to_sqlite("INSERT IGNORE INTO t (a) VALUES (%s)")
+        self.assertEqual(result, "INSERT OR IGNORE INTO t (a) VALUES (?)")
+
+    def test_to_sqlite_insert_ignore_case_insensitive(self):
+        """測試 insert ignore（小寫）也能正確轉換"""
+        result = self.db._to_sqlite("insert ignore into t (a) values (?)")
+        self.assertIn("INSERT OR IGNORE", result.upper())
+
+    def test_execute_query_insert_returns_rowcount(self):
+        """測試 INSERT execute_query 回傳受影響行數"""
+        result = self.db.execute_query(
+            "INSERT INTO test_table (name, value) VALUES (%s, %s)",
+            params=('hello', 42),
+            fetch=False,
+        )
+        self.assertEqual(result, 1)
+
+    def test_execute_query_select_returns_list(self):
+        """測試 SELECT execute_query 回傳 list[dict]"""
+        self.db.execute_query(
+            "INSERT INTO test_table (name, value) VALUES (%s, %s)",
+            params=('world', 99),
+        )
+        rows = self.db.execute_query(
+            "SELECT * FROM test_table WHERE name=%s", params=('world',), fetch=True
+        )
+        self.assertIsInstance(rows, list)
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(rows[0]['name'], 'world')
+        self.assertEqual(rows[0]['value'], 99)
+
+    def test_execute_query_update_returns_rowcount(self):
+        """測試 UPDATE execute_query 回傳受影響行數"""
+        self.db.execute_query(
+            "INSERT INTO test_table (name, value) VALUES (%s, %s)", params=('x', 1)
+        )
+        count = self.db.execute_query(
+            "UPDATE test_table SET value=%s WHERE name=%s", params=(2, 'x'), fetch=False
+        )
+        self.assertEqual(count, 1)
+
+    def test_execute_transaction_commits(self):
+        """測試 execute_transaction 原子提交"""
+        queries = [
+            ("INSERT INTO test_table (name, value) VALUES (%s, %s)", ('a', 1)),
+            ("INSERT INTO test_table (name, value) VALUES (%s, %s)", ('b', 2)),
+        ]
+        results = self.db.execute_transaction(queries)
+        self.assertEqual(results, [1, 1])
+        rows = self.db.execute_query("SELECT * FROM test_table", fetch=True)
+        self.assertEqual(len(rows), 2)
+
+    def test_execute_transaction_rollback_on_error(self):
+        """測試 execute_transaction 失敗時 rollback"""
+        queries = [
+            ("INSERT INTO test_table (name, value) VALUES (%s, %s)", ('rollback_test', 1)),
+            ("INVALID SQL ??? (%s)", ('x',)),
+        ]
+        with self.assertRaises(Exception):
+            self.db.execute_transaction(queries)
+        rows = self.db.execute_query(
+            "SELECT * FROM test_table WHERE name=%s", params=('rollback_test',), fetch=True
+        )
+        self.assertEqual(len(rows), 0)
+
+    def test_health_check_returns_true(self):
+        """測試 SQLite health_check 回傳 True"""
+        self.assertTrue(self.db.health_check())
+
+    def test_get_connection_context_manager(self):
+        """測試 get_connection context manager 可正常取得連線"""
+        with self.db.get_connection() as conn:
+            self.assertIsNotNone(conn)
+            row = conn.execute("SELECT 1").fetchone()
+            self.assertEqual(row[0], 1)
+
+    def test_get_cursor_dictionary_true(self):
+        """測試 get_cursor dictionary=True 回傳 Row 游標"""
+        self.db.execute_query(
+            "INSERT INTO test_table (name, value) VALUES (%s, %s)", params=('cur_test', 7)
+        )
+        with self.db.get_cursor(dictionary=True) as (cursor, conn):
+            cursor.execute("SELECT * FROM test_table WHERE name='cur_test'")
+            row = cursor.fetchone()
+            self.assertEqual(row['name'], 'cur_test')
+
+
 class TestGlobalDbManager(unittest.TestCase):
     """測試全域 db_manager 實例"""
 
     def test_global_instance_exists(self):
         """測試全域 db_manager 實例存在"""
         # 確保環境變數已設定以避免連線錯誤
+        os.environ.setdefault('DB_TYPE', 'mariadb')
         os.environ.setdefault('DB_HOST', 'localhost')
         os.environ.setdefault('DB_PORT', '3306')
         os.environ.setdefault('DB_USER', 'test')

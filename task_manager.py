@@ -10,6 +10,17 @@ from datetime import datetime, timedelta
 from db_manager import db_manager
 
 
+def _sql(mariadb_sql, sqlite_sql):
+    """根據目前 DB 後端回傳對應的 SQL 片段。
+
+    用於少數 MariaDB 與 SQLite 語法不相容的場合：
+    - TIMESTAMPDIFF vs julianday()
+    - CONCAT() vs ||
+    - NOW() - INTERVAL vs datetime('now', ...)
+    """
+    return sqlite_sql if db_manager.db_type == 'sqlite' else mariadb_sql
+
+
 class TaskRepository:
     """任務資料庫操作的統一入口。
 
@@ -75,7 +86,11 @@ class TaskRepository:
     def get_task_statistics(self):
         """查詢任務統計資訊，回傳 dict；查詢失敗時回傳 None"""
         try:
-            query = """
+            avg_dur = _sql(
+                'TIMESTAMPDIFF(SECOND, start_time, end_time)',
+                "CAST((julianday(end_time) - julianday(start_time)) * 86400 AS INTEGER)",
+            )
+            query = f"""
             SELECT
                 COUNT(*) AS total,
                 SUM(status = 'pending')    AS pending,
@@ -84,7 +99,7 @@ class TaskRepository:
                 SUM(status = 'failed')     AS failed,
                 SUM(retry_count > 0)       AS retried,
                 AVG(CASE WHEN status IN ('completed','failed')
-                    THEN TIMESTAMPDIFF(SECOND, start_time, end_time) END) AS avg_duration
+                    THEN {avg_dur} END) AS avg_duration
             FROM conversion_tasks
             """
             rows = db_manager.execute_query(query, fetch=True)
@@ -272,11 +287,15 @@ class TaskRepository:
 
             retried = 0
             for task in failed_tasks:
+                concat_expr = _sql(
+                    "CONCAT('Retry #', %s, ': ', COALESCE(error_message, ''))",
+                    "('Retry #' || %s || ': ' || COALESCE(error_message, ''))",
+                )
                 rows = db_manager.execute_query(
-                    '''UPDATE conversion_tasks
+                    f'''UPDATE conversion_tasks
                        SET status = 'pending',
                            is_processing = FALSE,
-                           error_message = CONCAT('Retry #', %s, ': ', COALESCE(error_message, ''))
+                           error_message = {concat_expr}
                        WHERE id = %s AND status = 'failed' ''',
                     (task['retry_count'], task['id'])
                 )
@@ -341,11 +360,15 @@ class TaskRepository:
             return 0
         try:
             placeholders = ','.join(['%s'] * len(task_ids))
+            concat_expr = _sql(
+                "CONCAT(%s, COALESCE(error_message,''))",
+                "(%s || COALESCE(error_message,''))",
+            )
             rows = db_manager.execute_query(
                 f"""UPDATE conversion_tasks
                     SET status='pending', is_processing=FALSE,
                         retry_count=0,
-                        error_message=CONCAT(%s, COALESCE(error_message,''))
+                        error_message={concat_expr}
                     WHERE id IN ({placeholders})""",
                 (f'[{reason}] ',) + tuple(task_ids)
             )
@@ -375,10 +398,14 @@ class TaskRepository:
             ) or 0
 
             # 殭屍類型 2：lock 已釋放但 status 未更新（超過 5 分鐘確保不誤殺正常流程）
+            stale_expr = _sql(
+                "NOW() - INTERVAL 5 MINUTE",
+                "datetime('now', '-5 minutes')",
+            )
             cleaned_unlocked = db_manager.execute_query(
-                "UPDATE conversion_tasks SET status = 'pending' "
-                "WHERE status = 'processing' AND is_processing = FALSE "
-                "AND updated_at < NOW() - INTERVAL 5 MINUTE"
+                f"UPDATE conversion_tasks SET status = 'pending' "
+                f"WHERE status = 'processing' AND is_processing = FALSE "
+                f"AND updated_at < {stale_expr}"
             ) or 0
 
             total = cleaned_locked + cleaned_unlocked
