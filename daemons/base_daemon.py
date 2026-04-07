@@ -242,14 +242,13 @@ class BaseDaemon(ABC):
           LOG_MAX_BYTES    單檔大小上限（預設 10MB）
           LOG_BACKUP_COUNT 保留舊檔數量（預設 5，總計最多 LOG_MAX_BYTES × (1 + COUNT)）
 
-        console handler 始終加入：foreground 模式下輸出至終端；
-        daemon 模式下 DaemonContext 已將 stdout 重新導向至 /dev/null，
-        寫入無副作用。
+        console handler 不在此加入，以避免 status/stop 等管理指令產生
+        不必要的終端輸出。前景執行時由 run_in_foreground() 負責加入。
         """
         return setup_rotating_logger(
             name=self.name,
             log_file=self.log_file,
-            console=True,
+            console=False,
         )
     
     def daemonize(self):
@@ -304,6 +303,8 @@ class BaseDaemon(ABC):
     
     def run_in_foreground(self):
         """在前景執行（用於測試）"""
+        from logging_utils import _add_console_handler
+        _add_console_handler(self.logger)
         try:
             self.logger.info(f"{self.name} started in foreground mode with PID: {os.getpid()}")
             self.is_running = True
