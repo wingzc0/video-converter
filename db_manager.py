@@ -138,6 +138,10 @@ class DatabaseManager:
             # WAL 模式：允許多個讀者與一個寫者同時操作，適合多執行緒 daemon
             conn.execute("PRAGMA journal_mode = WAL")
             conn.execute("PRAGMA synchronous = NORMAL")
+            # 多 process 架構下（scan_daemon + process_daemon 同時寫入），
+            # 預設 busy_timeout=0 會讓搶不到寫鎖的 process 立即拿到 SQLITE_BUSY。
+            # 設為 5000ms 讓 SQLite 自動 retry，避免非必要的寫入失敗。
+            conn.execute("PRAGMA busy_timeout = 5000")
             self._local.conn = conn
             print("SQLite connection initialized")
         return self._local.conn

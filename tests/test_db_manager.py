@@ -491,6 +491,19 @@ class TestSQLiteDatabaseManager(unittest.TestCase):
             row = conn.execute("SELECT 1").fetchone()
             self.assertEqual(row[0], 1)
 
+    def test_pragma_busy_timeout_set(self):
+        """測試 busy_timeout PRAGMA 已設定（多 process 寫入衝突時自動 retry）"""
+        with self.db.get_connection() as conn:
+            row = conn.execute("PRAGMA busy_timeout").fetchone()
+            self.assertGreater(row[0], 0)
+
+    def test_pragma_wal_mode_set(self):
+        """WAL journal mode 對 :memory: 無效（保持 'memory'）；
+        檔案型 SQLite 才會啟用 WAL，此處僅確認 PRAGMA 可正常查詢。"""
+        with self.db.get_connection() as conn:
+            row = conn.execute("PRAGMA journal_mode").fetchone()
+            self.assertIn(row[0], ("wal", "memory"))
+
     def test_get_cursor_dictionary_true(self):
         """測試 get_cursor dictionary=True 回傳 Row 游標"""
         self.db.execute_query(
