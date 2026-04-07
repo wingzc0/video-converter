@@ -242,14 +242,14 @@ class BaseDaemon(ABC):
           LOG_MAX_BYTES    單檔大小上限（預設 10MB）
           LOG_BACKUP_COUNT 保留舊檔數量（預設 5，總計最多 LOG_MAX_BYTES × (1 + COUNT)）
 
-        標準輸出 handler 僅在非 daemon 模式（sys.stdout 無 fileno）下加入。
+        console handler 始終加入：foreground 模式下輸出至終端；
+        daemon 模式下 DaemonContext 已將 stdout 重新導向至 /dev/null，
+        寫入無副作用。
         """
-        # 標準輸出僅在非 daemon 模式下加入（daemon 模式的 stdout 無 fileno 屬性）
-        console = not hasattr(sys.stdout, 'fileno')
         return setup_rotating_logger(
             name=self.name,
             log_file=self.log_file,
-            console=console,
+            console=True,
         )
     
     def daemonize(self):
