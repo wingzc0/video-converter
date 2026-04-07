@@ -2,7 +2,7 @@
 
 ## 程式庫總覽
 
-這是一個**基於 Python 的自動化影片轉檔流水線**。其主要功能是遞迴掃描指定目錄中的影片檔案，並將所有解析度高於 480p 的影片轉換為 480p（H.264/AAC 編碼），同時使用 MariaDB 資料庫追蹤所有轉檔任務。
+這是一個**基於 Python 的自動化影片轉檔流水線**。其主要功能是遞迴掃描指定目錄中的影片檔案，並將所有解析度高於 480p 的影片轉換為 480p（H.264/AAC 編碼），同時使用資料庫追蹤所有轉檔任務。支援 **MariaDB**（預設，適合多機部署）與 **SQLite**（輕量本機部署）雙後端，透過環境變數 `DB_TYPE` 切換，無需修改任何程式碼。
 
 ---
 
@@ -12,7 +12,8 @@
 |---|---|
 | **Python 3** | 主要開發語言 |
 | **FFmpeg / ffprobe** | 影片轉碼與元數據讀取 |
-| **MariaDB（MySQL）** | 持久化任務佇列與狀態追蹤 |
+| **MariaDB（MySQL）** | 持久化任務佇列與狀態追蹤（預設後端） |
+| **SQLite** | 輕量單機後端（無需額外服務，`DB_TYPE=sqlite`） |
 | **Flask + Flask-SocketIO** | REST API 與即時 WebSocket 推送 |
 | **python-daemon** | UNIX daemon 程序管理（PID 檔、背景化） |
 | **psutil** | 可選的系統指標（CPU、記憶體、磁碟） |
@@ -34,14 +35,28 @@ video-converter/
 │                              #                          失敗時 error 包含 ffmpeg stderr 最後幾行
 │                              #   get_video_duration() – 用 ffprobe 取得影片時長
 │
-├── db_manager.py              # MariaDB 連接池管理（mysql.connector）
-│                              #   DatabaseManager 類別，維護 5 個連接的連接池
+├── db_manager.py              # 資料庫管理器，支援 MariaDB 與 SQLite 雙後端
+│                              #   DatabaseManager 類別，透過 DB_TYPE 環境變數選擇後端：
+│                              #     mariadb：mysql.connector connection pool（5 連線）
+│                              #     sqlite ：threading.local per-thread 連線 + WAL 模式
+│                              #   dialect property：依後端回傳對應 SqlDialect 實例
 │                              #   execute_query()、execute_transaction()、health_check()
 │                              #   以模組級別的單例形式匯出：db_manager
 │
+├── sql_dialect.py             # SQL 方言抽象層（Factory Method 模式）
+│                              #   SqlDialect 抽象基底類別：定義跨後端不相容的 SQL 表達式介面
+│                              #     timestampdiff_seconds()、concat()、interval_ago()、translate_query()
+│                              #   MariaDBDialect：MariaDB 原生語法，translate_query 直接回傳
+│                              #   SQLiteDialect ：julianday()、|| 串接、datetime('now',...)，
+│                              #                  translate_query 轉換 %s→? 與 INSERT IGNORE→INSERT OR IGNORE
+│                              #   create_dialect(db_type)：工廠函式；新增後端只需新增子類別
+│                              #                           並在 _DIALECTS 字典登錄一行
+│
 ├── init_db.py                 # 一次性資料庫結構初始化工具
-│                              #   建立：conversion_tasks 表 + processing_lock 表
-│                              #   為 status、is_processing、時間戳等欄位建立索引
+│                              #   依 DB_TYPE 路由至 _init_mariadb() 或 _init_sqlite()
+│                              #   MariaDB：建立 conversion_tasks + processing_lock 表、索引
+│                              #   SQLite ：同等 schema（AUTOINCREMENT、TEXT CHECK()、INTEGER bool）
+│                              #            + AFTER UPDATE trigger 模擬 ON UPDATE CURRENT_TIMESTAMP
 │
 ├── task_manager.py            # 任務資料庫操作的統一抽象層
 │                              #   TaskRepository 類別：封裝所有 conversion_tasks DB 操作
@@ -115,7 +130,8 @@ video-converter/
 │   ├── video-processor.service # process_daemon 的 systemd 服務模板
 │   └── video-api.service      # API 伺服器的 systemd 服務模板
 │
-├── .env.sample                # 設定範本（含所有可用變數與說明）
+├── sql_dialect.py             # SQL 方言抽象層（Factory Method 模式）
+├── .env.sample                # 設定範本（含所有可用變數與說明，含 DB_TYPE / DB_PATH）
 └── README.md                  # 本文件
 ```
 
@@ -127,9 +143,9 @@ video-converter/
 [ 檔案系統 ]
       │  （INPUT_DIRECTORY 輸入目錄）
       ▼
-[ 掃描 Daemon ]  ──── ffprobe（僅全新檔案）────► [ MariaDB：conversion_tasks ]
+[ 掃描 Daemon ]  ──── ffprobe（僅全新檔案）────► [ 資料庫：conversion_tasks ]
  (scan_daemon.py)   DB/stat 檢查已知檔案               │  status='pending'（待處理）
-                    避免重複存取 NFS                     │
+                    避免重複存取 NFS                     │  MariaDB 或 SQLite（DB_TYPE）
 [ 處理 Daemon ] ◄──────── 每 CHECK_INTERVAL 秒輪詢 ────┘
  (process_daemon.py)  retry_count=0 優先取出
       │  工作執行緒（最多 MAX_WORKERS 個）
@@ -179,9 +195,23 @@ cp .env.sample .env
 # 編輯 .env，至少填入資料庫連線資訊與輸入/輸出目錄
 ```
 
+**SQLite 快速試用**（無需安裝 MariaDB）：
+
+```bash
+cp .env.sample .env
+# 在 .env 中設定：
+#   DB_TYPE=sqlite
+#   DB_PATH=./data/converter.db
+python3 init_db.py          # 自動建立 ./data/converter.db 及所有資料表
+```
+
+> SQLite 適合單機輕量部署或開發測試；生產環境多機部署建議使用 MariaDB。
+
 | 變數 | 說明 |
 |---|---|
-| `DB_HOST`、`DB_PORT`、`DB_USER`、`DB_PASSWORD`、`DB_NAME` | 資料庫連線設定 |
+| `DB_TYPE` | 資料庫後端：`mariadb`（預設）或 `sqlite`。選 `sqlite` 時只需設定 `DB_PATH`，無需 DB_HOST 等連線設定 |
+| `DB_HOST`、`DB_PORT`、`DB_USER`、`DB_PASSWORD`、`DB_NAME` | MariaDB 連線設定（`DB_TYPE=mariadb` 時必填） |
+| `DB_PATH` | SQLite 資料庫檔案路徑（`DB_TYPE=sqlite` 時生效，預設：`./data/converter.db`；`:memory:` 表示純記憶體，僅供測試） |
 | `INPUT_DIRECTORY` | 輸入影片目錄 |
 | `OUTPUT_DIRECTORY` | 輸出目錄 |
 | `SUPPORTED_EXTENSIONS` | 支援的副檔名（預設：`.mp4,.mkv,.avi,.mov,.flv,.wmv,.m4v,.webm`） |
@@ -535,7 +565,7 @@ ffmpeg 的 progress 訊息以 `\r`（carriage return）結尾，而非 `\n`。Py
 - **掃描**（`scan_daemon.py`）：檔案探索與任務入列
 - **處理**（`process_daemon.py`）：多執行緒轉碼執行
 - **任務管理**（`task_manager.py`）：TaskRepository — 集中管理所有任務 DB 操作的單一入口
-- **持久化**（`db_manager.py` + MariaDB）：任務佇列與狀態追蹤
+- **持久化**（`db_manager.py` + `sql_dialect.py`）：雙後端（MariaDB / SQLite）任務佇列與狀態追蹤；SQL 方言差異由 Factory Method 模式封裝，新增後端只需實作 `SqlDialect` 子類別並登錄一行
 - **可觀測性**（`api/server.py`）：REST API + WebSocket 即時推送
 - **監控**（`monitor_daemons.py`）：終端機儀表板
 
