@@ -96,6 +96,8 @@ video-converter/
 │                              #   worker() 統一管理鎖生命週期（lock_acquired 旗標 + finally 釋放）
 │                              #   呼叫 converter.convert_to_480p() 並即時回報進度
 │                              #   ffmpeg 雙層超時保護：stall timeout（無進度）+ absolute timeout
+│                              #     absolute timeout：FFMPEG_TIMEOUT=0（預設）時動態計算
+│                              #       = max(FFMPEG_TIMEOUT_MIN, 影片時長 × FFMPEG_TIMEOUT_MULTIPLIER)
 │                              #   轉檔完成後驗證輸出時長（abs 差值 > DURATION_THRESHOLD → failed）
 │                              #   status='completed'/'failed' 時原子性清除 is_processing 旗標
 │                              #   retry_count 在 update_task_status(failed) 時遞增（非重新排入時）
@@ -155,7 +157,7 @@ video-converter/
 [ converter.py ] ──── ffmpeg ────► OUTPUT_DIRECTORY/480p_<stem>.mp4（mp4 輸入）
                                               或 480p_<stem>_<ext>.mp4（其他格式）
       │  watchdog thread：stall timeout（無進度 FFMPEG_STALL_TIMEOUT 秒）
-      │             ：absolute timeout（FFMPEG_TIMEOUT 秒上限）
+      │             ：absolute timeout（動態 = 時長 × FFMPEG_TIMEOUT_MULTIPLIER，或固定 FFMPEG_TIMEOUT 秒）
       │  失敗時回傳 ffmpeg stderr 最後幾行供診斷
       │
       ├─► ffprobe 驗證輸出時長（abs 差 > DURATION_THRESHOLD → failed + retry）
@@ -226,10 +228,14 @@ python3 init_db.py          # 自動建立 ./data/converter.db 及所有資料�
 | `RETRY_INTERVAL_CYCLES` | 每幾個 check cycle 執行一次重試（預設：`10`） |
 | `STALE_HOURS` | 任務卡在 processing 超過幾小時視為過時（預設：`1`，NFS 長時轉檔建議 `4` 以上） |
 | `DURATION_THRESHOLD` | 輸出檔長度驗證閾值（秒）：輸出與來源時長差超過此值（abs）則視為不完整並重新加入佇列；設 `0` 停用驗證（預設：`2.0`） |
-| `FFMPEG_TIMEOUT` | ffmpeg 整體轉檔絕對上限（秒）；超過即強制終止並標記失敗；設 `0` 停用（預設：`7200`，即 2 小時） |
+| `FFMPEG_TIMEOUT` | ffmpeg 整體轉檔絕對上限（秒）；`0`（預設）= 動態模式（依 `FFMPEG_TIMEOUT_MULTIPLIER × 影片時長`自動計算）；`> 0` = 固定秒數 |
+| `FFMPEG_TIMEOUT_MULTIPLIER` | 動態 timeout 倍數（`FFMPEG_TIMEOUT=0` 時生效）；`timeout = max(FFMPEG_TIMEOUT_MIN, 時長 × 此值)`（預設：`2.0`） |
+| `FFMPEG_TIMEOUT_MIN` | 動態 timeout 最低保障秒數，避免極短影片 timeout 過短（預設：`300`） |
 | `FFMPEG_STALL_TIMEOUT` | ffmpeg 無進度輸出超時（秒）；適用於 NFS I/O stall 導致 ffmpeg 停住但不退出的情況；設 `0` 停用（預設：`300`，即 5 分鐘） |
 | `API_SERVER_HOST`、`API_SERVER_PORT`、`API_SERVER_URL` | API 伺服器設定 |
 | `LOG_LEVEL` | 日誌等級 |
+| `LOG_MAX_BYTES` | log 單檔大小上限（位元組）；超過自動輪替（預設：`10485760`，即 10MB） |
+| `LOG_BACKUP_COUNT` | 保留舊 log 檔份數（預設：`5`，總計最多 60MB） |
 
 ---
 
