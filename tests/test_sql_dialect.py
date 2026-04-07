@@ -13,7 +13,77 @@ from sql_dialect import (
     SQLiteDialect,
     SqlDialect,
     create_dialect,
+    _validate_sql_identifier,
 )
+
+
+class TestValidateSqlIdentifier(unittest.TestCase):
+    """_validate_sql_identifier 安全驗證函式測試"""
+
+    def test_valid_simple_column(self):
+        """單一欄位名稱應通過驗證"""
+        _validate_sql_identifier('start_time', 'col')  # no exception
+
+    def test_valid_table_dot_column(self):
+        """table.column 形式應通過驗證"""
+        _validate_sql_identifier('t.end_time', 'col')
+
+    def test_valid_alphanumeric(self):
+        _validate_sql_identifier('col1', 'col')
+
+    def test_rejects_semicolon(self):
+        """含分號的輸入應被拒絕（防止 SQL injection）"""
+        with self.assertRaises(ValueError) as ctx:
+            _validate_sql_identifier("end); DROP TABLE users; --", 'col')
+        self.assertIn('SqlDialect', str(ctx.exception))
+
+    def test_rejects_space(self):
+        with self.assertRaises(ValueError):
+            _validate_sql_identifier('col name', 'col')
+
+    def test_rejects_single_quote(self):
+        with self.assertRaises(ValueError):
+            _validate_sql_identifier("col'injection", 'col')
+
+    def test_rejects_empty_string(self):
+        with self.assertRaises(ValueError):
+            _validate_sql_identifier('', 'col')
+
+    def test_rejects_starts_with_digit(self):
+        with self.assertRaises(ValueError):
+            _validate_sql_identifier('1col', 'col')
+
+    def test_error_message_contains_param_name(self):
+        """錯誤訊息應包含參數名稱，方便除錯"""
+        with self.assertRaises(ValueError) as ctx:
+            _validate_sql_identifier('bad col', 'start_col')
+        self.assertIn('start_col', str(ctx.exception))
+
+
+class TestTimestampdiffValidation(unittest.TestCase):
+    """驗證 timestampdiff_seconds 在非法識別字時拒絕執行"""
+
+    def test_mariadb_rejects_injection(self):
+        d = MariaDBDialect()
+        with self.assertRaises(ValueError):
+            d.timestampdiff_seconds('start_time', "end); DROP TABLE t; --")
+
+    def test_sqlite_rejects_injection(self):
+        d = SQLiteDialect()
+        with self.assertRaises(ValueError):
+            d.timestampdiff_seconds("start'; DROP TABLE t; --", 'end_time')
+
+    def test_mariadb_accepts_valid_columns(self):
+        d = MariaDBDialect()
+        result = d.timestampdiff_seconds('start_time', 'end_time')
+        self.assertIn('start_time', result)
+        self.assertIn('end_time', result)
+
+    def test_sqlite_accepts_valid_columns(self):
+        d = SQLiteDialect()
+        result = d.timestampdiff_seconds('start_time', 'end_time')
+        self.assertIn('start_time', result)
+        self.assertIn('end_time', result)
 
 
 class TestMariaDBDialect(unittest.TestCase):

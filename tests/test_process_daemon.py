@@ -365,17 +365,15 @@ class TestKillOrphanedFfmpeg(unittest.TestCase):
     @patch('task_manager.db_manager')
     @patch('psutil.process_iter')
     @patch('daemons.process_daemon.ProcessDaemon._get_daemon_descendant_pids')
-    def test_toctou_skip_if_completed_on_second_check(self, mock_pids, mock_iter, mock_db):
-        """TOCTOU 防護：第一次查 status=processing，第二次查 status=completed → 不 kill"""
+    def test_skips_non_active_status(self, mock_pids, mock_iter, mock_db):
+        """status=completed の task は candidate に含まれない"""
         d = _make_process_daemon()
         mock_pids.return_value = {os.getpid()}
 
-        orphan = self._make_mock_proc(4444, ['ffmpeg', '-i', '/videos/race.mp4', '/tmp/out.mp4'])
+        orphan = self._make_mock_proc(4444, ['ffmpeg', '-i', '/videos/done.mp4', '/tmp/out.mp4'])
         mock_iter.return_value = [orphan]
-        # First call: processing; second call (double-check): completed
-        mock_db.execute_query.side_effect = [
-            [{'id': 20, 'status': 'processing', 'output_path': '/out/race.mp4'}],
-            [{'id': 20, 'status': 'completed', 'output_path': '/out/race.mp4'}],
+        mock_db.execute_query.return_value = [
+            {'id': 20, 'status': 'completed', 'output_path': '/out/done.mp4'},
         ]
 
         with patch('os.kill') as mock_kill:

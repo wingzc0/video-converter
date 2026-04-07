@@ -440,11 +440,6 @@ def find_orphaned_ffmpeg_candidates(task_repo, excluded_pids):
             if task is None or task.get('status') not in _ACTIVE_STATUSES:
                 continue
 
-            # Double-check status to close the TOCTOU window
-            task = task_repo.get_task_by_input_path(input_path)
-            if task is None or task.get('status') not in _ACTIVE_STATUSES:
-                continue
-
             candidates.append({
                 'pid': proc.pid,
                 'task_id': task['id'],

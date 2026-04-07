@@ -131,7 +131,7 @@ class DatabaseManager:
             if db_path != ':memory:':
                 db_dir = os.path.dirname(os.path.abspath(db_path))
                 os.makedirs(db_dir, exist_ok=True)
-            conn = sqlite3.connect(db_path, check_same_thread=False)
+            conn = sqlite3.connect(db_path)
             # 讓查詢結果支援 dict 風格存取，與 MariaDB 行為一致
             conn.row_factory = sqlite3.Row
             conn.execute("PRAGMA foreign_keys = ON")
