@@ -24,6 +24,11 @@ def _make_process_daemon(**env_overrides):
         'MAX_RETRIES': '3',
         'RETRY_INTERVAL_CYCLES': '10',
         'STALE_HOURS': '1',
+        # ffmpeg timeout 預設值：明確設定以避免 .env 的真實值干擾測試
+        'FFMPEG_TIMEOUT': '0',
+        'FFMPEG_STALL_TIMEOUT': '0',
+        'FFMPEG_TIMEOUT_MULTIPLIER': '3.0',
+        'FFMPEG_TIMEOUT_MIN': '300',
         # 明確指定 log/pid/status 檔路徑到可寫入的 /tmp，
         # 避免 patch.dict 還原 env 後 load_dotenv() 的效果消失，
         # 導致後續建立的 daemon 嘗試在 /var/log 建目錄而 PermissionError
@@ -519,6 +524,44 @@ class TestCleanupStaleTasksCoalesce(unittest.TestCase):
         self.assertIn("is_processing = TRUE", update_query)
         delete_query = queries[1][0]
         self.assertIn('processing_lock', delete_query.lower())
+
+
+# ---------------------------------------------------------------------------
+# Dynamic timeout configuration
+# ---------------------------------------------------------------------------
+
+class TestDynamicTimeoutConfig(unittest.TestCase):
+    """ProcessDaemon 動態 timeout 環境變數讀取"""
+
+    def test_default_is_dynamic_mode(self):
+        """預設 FFMPEG_TIMEOUT=0 → ffmpeg_timeout=None，啟用動態計算"""
+        d = _make_process_daemon()
+        self.assertIsNone(d.ffmpeg_timeout)
+
+    def test_fixed_timeout_when_env_set(self):
+        """FFMPEG_TIMEOUT=7200 → ffmpeg_timeout=7200（固定模式）"""
+        d = _make_process_daemon(FFMPEG_TIMEOUT='7200')
+        self.assertEqual(d.ffmpeg_timeout, 7200)
+
+    def test_default_multiplier(self):
+        """FFMPEG_TIMEOUT_MULTIPLIER 預設應為 3.0"""
+        d = _make_process_daemon()
+        self.assertAlmostEqual(d.timeout_multiplier, 3.0)
+
+    def test_custom_multiplier(self):
+        """FFMPEG_TIMEOUT_MULTIPLIER=5.0 應被正確讀取"""
+        d = _make_process_daemon(FFMPEG_TIMEOUT_MULTIPLIER='5.0')
+        self.assertAlmostEqual(d.timeout_multiplier, 5.0)
+
+    def test_default_min_timeout(self):
+        """FFMPEG_TIMEOUT_MIN 預設應為 300"""
+        d = _make_process_daemon()
+        self.assertEqual(d.min_timeout, 300)
+
+    def test_custom_min_timeout(self):
+        """FFMPEG_TIMEOUT_MIN=600 應被正確讀取"""
+        d = _make_process_daemon(FFMPEG_TIMEOUT_MIN='600')
+        self.assertEqual(d.min_timeout, 600)
 
 
 if __name__ == '__main__':

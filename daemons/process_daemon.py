@@ -68,12 +68,17 @@ class ProcessDaemon(BaseDaemon):
         self.duration_threshold = float(os.getenv('DURATION_THRESHOLD', '2.0'))
 
         # ffmpeg 超時保護
-        # FFMPEG_TIMEOUT：整體轉檔絕對上限（秒），0 表示不限制
+        # FFMPEG_TIMEOUT：整體轉檔絕對上限（秒），0 表示動態計算（依 FFMPEG_TIMEOUT_MULTIPLIER）
         # FFMPEG_STALL_TIMEOUT：多久無進度輸出即視為 NFS stall（秒），0 表示不限制
-        _ft = int(os.getenv('FFMPEG_TIMEOUT', '7200'))
+        _ft = int(os.getenv('FFMPEG_TIMEOUT', '0'))
         _fst = int(os.getenv('FFMPEG_STALL_TIMEOUT', '300'))
         self.ffmpeg_timeout = _ft if _ft > 0 else None
         self.ffmpeg_stall_timeout = _fst if _fst > 0 else None
+
+        # 動態 timeout 參數（僅在 FFMPEG_TIMEOUT=0 時生效）
+        # timeout = max(FFMPEG_TIMEOUT_MIN, video_duration * FFMPEG_TIMEOUT_MULTIPLIER)
+        self.timeout_multiplier = float(os.getenv('FFMPEG_TIMEOUT_MULTIPLIER', '3.0'))
+        self.min_timeout = int(os.getenv('FFMPEG_TIMEOUT_MIN', '300'))
 
         # 時間限制設定
         self.enable_time_restriction = os.getenv('ENABLE_TIME_RESTRICTION', 'false').strip().lower() == 'true'
@@ -90,7 +95,7 @@ class ProcessDaemon(BaseDaemon):
         self.logger.info(f"Check interval: {self.check_interval} seconds")
         self.logger.info(f"Max retries: {self.max_retries}, retry every {self.retry_interval_cycles} cycles, stale after {self.stale_hours}h")
         self.logger.info(
-            f"ffmpeg timeout: {self.ffmpeg_timeout or 'disabled'}s, "
+            f"ffmpeg timeout: {self.ffmpeg_timeout or f'dynamic ({self.timeout_multiplier}x, min {self.min_timeout}s)'}s, "
             f"stall timeout: {self.ffmpeg_stall_timeout or 'disabled'}s"
         )
         if self.enable_time_restriction:
@@ -178,6 +183,8 @@ class ProcessDaemon(BaseDaemon):
                 input_path, output_path, progress_callback,
                 ffmpeg_timeout=self.ffmpeg_timeout,
                 ffmpeg_stall_timeout=self.ffmpeg_stall_timeout,
+                timeout_multiplier=self.timeout_multiplier,
+                min_timeout=self.min_timeout,
                 _diag=_diag,
             )
             

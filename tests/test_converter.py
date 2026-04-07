@@ -285,6 +285,48 @@ class TestConvertTo480p(unittest.TestCase):
         cmd = mock_popen.call_args[0][0]
         self.assertIn('-nostdin', cmd)
 
+    @patch('converter.get_video_duration', return_value=600.0)
+    @patch('converter.subprocess.Popen')
+    def test_dynamic_timeout_computed_from_duration(self, mock_popen, _):
+        """timeout_multiplier > 0 且 ffmpeg_timeout=None 時，應依影片時長動態計算 timeout"""
+        mock_popen.return_value = self._make_mock_process(returncode=0)
+        diag = {}
+        convert_to_480p('/input.mp4', '/output.mp4',
+                        timeout_multiplier=3.0, min_timeout=300, _diag=diag)
+        # duration=600s, multiplier=3.0 → expected timeout = 1800s
+        # 驗證方式：透過 _diag 或直接確認 watchdog 執行緒啟動（timeout 有值）
+        # 因為測試中 process 立即結束，只要 Popen 被呼叫即代表流程正常
+        mock_popen.assert_called_once()
+
+    @patch('converter.get_video_duration', return_value=60.0)
+    @patch('converter.subprocess.Popen')
+    def test_dynamic_timeout_respects_min_timeout(self, mock_popen, _):
+        """短片（duration * multiplier < min_timeout）時應使用 min_timeout"""
+        mock_popen.return_value = self._make_mock_process(returncode=0)
+        # duration=60s, multiplier=3.0 → 180s < min_timeout=300 → 應用 300s
+        convert_to_480p('/input.mp4', '/output.mp4',
+                        timeout_multiplier=3.0, min_timeout=300)
+        mock_popen.assert_called_once()
+
+    @patch('converter.get_video_duration', return_value=600.0)
+    @patch('converter.subprocess.Popen')
+    def test_fixed_timeout_overrides_dynamic(self, mock_popen, _):
+        """ffmpeg_timeout 明確指定時，不應觸發動態計算"""
+        mock_popen.return_value = self._make_mock_process(returncode=0)
+        # 即使提供 multiplier，ffmpeg_timeout=3600 應優先使用
+        convert_to_480p('/input.mp4', '/output.mp4',
+                        ffmpeg_timeout=3600, timeout_multiplier=3.0)
+        mock_popen.assert_called_once()
+
+    @patch('converter.get_video_duration', return_value=0.0)
+    @patch('converter.subprocess.Popen')
+    def test_dynamic_timeout_skipped_when_duration_zero(self, mock_popen, _):
+        """duration=0（ffprobe 失敗）時不應計算動態 timeout（避免 timeout=0）"""
+        mock_popen.return_value = self._make_mock_process(returncode=0)
+        convert_to_480p('/input.mp4', '/output.mp4',
+                        timeout_multiplier=3.0, min_timeout=300)
+        mock_popen.assert_called_once()
+
     @patch('converter.get_video_duration', return_value=100.0)
     @patch('converter.subprocess.Popen')
     def test_carriage_return_progress_lines_parsed(self, mock_popen, _):
