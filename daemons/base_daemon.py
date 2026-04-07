@@ -4,7 +4,6 @@ import sys
 import time
 import signal
 import logging
-import logging.handlers
 import threading
 from pathlib import Path
 from datetime import datetime
@@ -12,6 +11,7 @@ from abc import ABC, abstractmethod
 from daemon import DaemonContext
 from daemon.pidfile import TimeoutPIDLockFile
 from dotenv import load_dotenv
+from logging_utils import setup_rotating_logger
 
 load_dotenv()
 
@@ -238,61 +238,19 @@ class BaseDaemon(ABC):
         """設定 logger，支援環境變數配置。
 
         使用 RotatingFileHandler 自動輪替 log 檔：
+          LOG_LEVEL        日誌等級（預設 INFO）
           LOG_MAX_BYTES    單檔大小上限（預設 10MB）
           LOG_BACKUP_COUNT 保留舊檔數量（預設 5，總計最多 LOG_MAX_BYTES × (1 + COUNT)）
+
+        標準輸出 handler 僅在非 daemon 模式（sys.stdout 無 fileno）下加入。
         """
-        logger = logging.getLogger(self.name)
-
-        # 從環境變數讀取 log level
-        log_level = os.getenv('LOG_LEVEL', 'INFO').upper()
-        logger.setLevel(getattr(logging, log_level, logging.INFO))
-
-        # 關閉並移除現有的 handler，避免底層 stream/fd 洩漏。
-        # 在 daemon 模式下，DaemonContext 進入後所有 fd 已被系統關閉，
-        # 此時呼叫 handler.close() 可能因 fd 無效而拋出 OSError，
-        # 屬於預期情況（底層 stream 已不存在），直接忽略即可
-        for handler in logger.handlers[:]:
-            try:
-                handler.close()
-            except OSError:
-                pass
-        logger.handlers.clear()
-
-        log_max_bytes   = int(os.getenv('LOG_MAX_BYTES', str(10 * 1024 * 1024)))  # 預設 10MB
-        log_backup_count = int(os.getenv('LOG_BACKUP_COUNT', '5'))
-
-        # 檔案 handler（RotatingFileHandler：大小超過 log_max_bytes 時自動輪替）
-        try:
-            file_handler = logging.handlers.RotatingFileHandler(
-                self.log_file,
-                maxBytes=log_max_bytes,
-                backupCount=log_backup_count,
-            )
-            file_handler.setFormatter(logging.Formatter(
-                '%(asctime)s - %(name)s - %(levelname)s - %(message)s'
-            ))
-            logger.addHandler(file_handler)
-        except Exception as e:
-            print(f"Error setting up file handler for {self.log_file}: {e}")
-            # 回退到標準輸出
-            console_handler = logging.StreamHandler(sys.stdout)
-            console_handler.setFormatter(logging.Formatter(
-                '%(asctime)s - %(name)s - %(levelname)s - %(message)s'
-            ))
-            logger.addHandler(console_handler)
-
-        # 標準輸出 handler（僅在非 daemon 模式下）
-        if not hasattr(sys.stdout, 'fileno'):
-            try:
-                console_handler = logging.StreamHandler(sys.stdout)
-                console_handler.setFormatter(logging.Formatter(
-                    '%(asctime)s - %(name)s - %(levelname)s - %(message)s'
-                ))
-                logger.addHandler(console_handler)
-            except Exception as e:
-                print(f"Error setting up console handler: {e}")
-
-        return logger
+        # 標準輸出僅在非 daemon 模式下加入（daemon 模式的 stdout 無 fileno 屬性）
+        console = not hasattr(sys.stdout, 'fileno')
+        return setup_rotating_logger(
+            name=self.name,
+            log_file=self.log_file,
+            console=console,
+        )
     
     def daemonize(self):
         """將程式轉為 daemon 模式"""

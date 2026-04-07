@@ -4,7 +4,6 @@ import json
 import time
 import threading
 import logging
-import logging.handlers
 from datetime import datetime
 from pathlib import Path
 from flask import Flask, jsonify, request
@@ -12,6 +11,7 @@ from flask_cors import CORS
 from flask_socketio import SocketIO, emit
 from dotenv import load_dotenv
 from task_manager import TaskRepository
+from logging_utils import setup_rotating_logger
 
 load_dotenv()
 
@@ -76,54 +76,22 @@ class APIServer:
         """設定 logger，使用 RotatingFileHandler 自動輪替，與 daemon 行為一致。
 
         輪替設定由環境變數控制（與 base_daemon 共用相同變數）：
+          LOG_LEVEL             日誌等級（預設 INFO）
           LOG_MAX_BYTES         單檔大小上限（預設 10MB）
           LOG_BACKUP_COUNT      保留舊檔數量（預設 5）
           API_SERVER_LOG_FILE   INFO+ 訊息寫入的 log 路徑
           API_SERVER_ERROR_LOG_FILE  ERROR+ 訊息獨立寫入的 error log 路徑
         """
-        self.logger = logging.getLogger('api-server')
-        self.logger.setLevel(logging.INFO)
-
-        # 移除現有的 handler
-        self.logger.handlers = []
-
-        log_max_bytes    = int(os.getenv('LOG_MAX_BYTES', str(10 * 1024 * 1024)))
-        log_backup_count = int(os.getenv('LOG_BACKUP_COUNT', '5'))
-
-        # 一般 log（INFO+）
-        log_file = os.getenv('API_SERVER_LOG_FILE', '/var/log/video-converter/api.log')
-        Path(log_file).parent.mkdir(parents=True, exist_ok=True)
-        file_handler = logging.handlers.RotatingFileHandler(
-            log_file,
-            maxBytes=log_max_bytes,
-            backupCount=log_backup_count,
-        )
-        file_handler.setFormatter(logging.Formatter(
-            '%(asctime)s - %(name)s - %(levelname)s - %(message)s'
-        ))
-        self.logger.addHandler(file_handler)
-
-        # Error log（ERROR+）— 與 daemon 的 stderr_log_file 對應
+        log_file = os.getenv('API_SERVER_LOG_FILE',
+                              '/var/log/video-converter/api.log')
         error_log_file = os.getenv('API_SERVER_ERROR_LOG_FILE',
                                    '/var/log/video-converter/api_error.log')
-        Path(error_log_file).parent.mkdir(parents=True, exist_ok=True)
-        error_handler = logging.handlers.RotatingFileHandler(
-            error_log_file,
-            maxBytes=log_max_bytes,
-            backupCount=log_backup_count,
+        self.logger = setup_rotating_logger(
+            name='api-server',
+            log_file=log_file,
+            error_log_file=error_log_file,
+            console=True,
         )
-        error_handler.setLevel(logging.ERROR)
-        error_handler.setFormatter(logging.Formatter(
-            '%(asctime)s - %(name)s - %(levelname)s - %(message)s'
-        ))
-        self.logger.addHandler(error_handler)
-
-        # 標準輸出 handler
-        console_handler = logging.StreamHandler(sys.stdout)
-        console_handler.setFormatter(logging.Formatter(
-            '%(asctime)s - %(name)s - %(levelname)s - %(message)s'
-        ))
-        self.logger.addHandler(console_handler)
     
     def create_app(self):
         """建立 Flask 應用"""
