@@ -34,7 +34,7 @@ class BaseDaemon(ABC):
     功能:
         - double-fork daemonization（透過 python-daemon DaemonContext）
         - PID 檔管理：啟動時寫入、停止時清除，防止重複啟動
-        - WatchedFileHandler logging：支援 logrotate 自動重開檔案
+        - RotatingFileHandler logging：單檔上限 LOG_MAX_BYTES，保留 LOG_BACKUP_COUNT 份
         - SIGTERM / SIGINT 導向 handle_shutdown()，設 is_running=False 優雅停機
         - 狀態檔案（JSON）定期寫出供 API 伺服器讀取，避免直接耦合
         - 路徑（PID/log/status）優先從環境變數讀取，其次使用建構子預設值
@@ -235,13 +235,18 @@ class BaseDaemon(ABC):
                 print(f"Warning: Could not check permissions for {directory}: {e}")
     
     def setup_logger(self):
-        """設定 logger，支援環境變數配置"""
+        """設定 logger，支援環境變數配置。
+
+        使用 RotatingFileHandler 自動輪替 log 檔：
+          LOG_MAX_BYTES    單檔大小上限（預設 10MB）
+          LOG_BACKUP_COUNT 保留舊檔數量（預設 5，總計最多 LOG_MAX_BYTES × (1 + COUNT)）
+        """
         logger = logging.getLogger(self.name)
-        
+
         # 從環境變數讀取 log level
         log_level = os.getenv('LOG_LEVEL', 'INFO').upper()
         logger.setLevel(getattr(logging, log_level, logging.INFO))
-        
+
         # 關閉並移除現有的 handler，避免底層 stream/fd 洩漏。
         # 在 daemon 模式下，DaemonContext 進入後所有 fd 已被系統關閉，
         # 此時呼叫 handler.close() 可能因 fd 無效而拋出 OSError，
@@ -252,10 +257,17 @@ class BaseDaemon(ABC):
             except OSError:
                 pass
         logger.handlers.clear()
-        
-        # 檔案 handler
+
+        log_max_bytes   = int(os.getenv('LOG_MAX_BYTES', str(10 * 1024 * 1024)))  # 預設 10MB
+        log_backup_count = int(os.getenv('LOG_BACKUP_COUNT', '5'))
+
+        # 檔案 handler（RotatingFileHandler：大小超過 log_max_bytes 時自動輪替）
         try:
-            file_handler = logging.handlers.WatchedFileHandler(self.log_file)
+            file_handler = logging.handlers.RotatingFileHandler(
+                self.log_file,
+                maxBytes=log_max_bytes,
+                backupCount=log_backup_count,
+            )
             file_handler.setFormatter(logging.Formatter(
                 '%(asctime)s - %(name)s - %(levelname)s - %(message)s'
             ))
@@ -268,7 +280,7 @@ class BaseDaemon(ABC):
                 '%(asctime)s - %(name)s - %(levelname)s - %(message)s'
             ))
             logger.addHandler(console_handler)
-        
+
         # 標準輸出 handler（僅在非 daemon 模式下）
         if not hasattr(sys.stdout, 'fileno'):
             try:
@@ -279,7 +291,7 @@ class BaseDaemon(ABC):
                 logger.addHandler(console_handler)
             except Exception as e:
                 print(f"Error setting up console handler: {e}")
-        
+
         return logger
     
     def daemonize(self):

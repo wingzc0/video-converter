@@ -126,6 +126,7 @@ video-converter/
 │
 ├── scripts/
 │   ├── install_daemons.sh     # 安裝腳本：將 service 模板替換後安裝至 /etc/systemd/system/
+│   ├── logrotate.conf         # logrotate 設定範本（進階選用；預設使用 Python RotatingFileHandler）
 │   ├── video-scanner.service  # scan_daemon 的 systemd 服務模板
 │   ├── video-processor.service # process_daemon 的 systemd 服務模板
 │   └── video-api.service      # API 伺服器的 systemd 服務模板
@@ -401,28 +402,29 @@ python3 conv_admin.py --add-file /path/to/video.mp4 --dry-run
 
 ---
 
-## Logrotate 設定
+## 日誌輪替
 
-日誌檔位於 `{{INSTALL_DIR}}/log/`，建議加入 logrotate 以避免檔案無限增長。
+### 內建輪替（RotatingFileHandler，預設啟用）
 
-建立 `/etc/logrotate.d/video-converter`，內容如下（請將路徑替換為實際安裝目錄）：
+daemon 使用 Python `RotatingFileHandler` 自動輪替，**無需任何系統設定**，開箱即用：
 
+| 環境變數 | 預設 | 說明 |
+|---|---|---|
+| `LOG_MAX_BYTES` | `10485760`（10MB） | 單檔大小上限 |
+| `LOG_BACKUP_COUNT` | `5` | 保留舊檔數（含當前檔共最多 6 × 10MB = 60MB） |
+
+超過上限時自動重命名為 `.1`、`.2`…，無需重啟 daemon。
+
+### 系統 logrotate（進階選用）
+
+若偏好以 logrotate 集中管理，可使用 `scripts/logrotate.conf` 範本：
+
+```bash
+sudo cp scripts/logrotate.conf /etc/logrotate.d/video-converter
+sudo sed -i 's|{{INSTALL_DIR}}|/opt/video-converter|g' /etc/logrotate.d/video-converter
 ```
-/opt/video-converter/log/scanner.log
-/opt/video-converter/log/scanner_error.log
-/opt/video-converter/log/processor.log
-/opt/video-converter/log/processor_error.log
-/opt/video-converter/log/api.log {
-    daily
-    rotate 30
-    compress
-    delaycompress
-    missingok
-    notifempty
-}
-```
 
-> daemon 使用 `WatchedFileHandler`，logrotate 輪替後會自動偵測 inode 變化並重新開啟新檔，不需要 `copytruncate`。
+> ⚠️ 同時使用兩套機制時，建議在 `.env` 設定 `LOG_MAX_BYTES=0` 停用 Python 層輪替，避免競爭。
 
 ---
 

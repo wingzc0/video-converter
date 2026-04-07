@@ -165,5 +165,79 @@ class TestGetProcessUptime(unittest.TestCase):
         self.assertIsInstance(result, float)
 
 
+# ---------------------------------------------------------------------------
+# setup_logger — RotatingFileHandler
+# ---------------------------------------------------------------------------
+
+class TestSetupLogger(unittest.TestCase):
+    """BaseDaemon.setup_logger() — RotatingFileHandler 設定"""
+
+    def _make_daemon_with_env(self, **env):
+        import tempfile
+        tmp = Path(tempfile.mkdtemp())
+        log_file = str(tmp / 'test.log')
+        base_env = {
+            'INPUT_DIRECTORY': '/tmp',
+            'OUTPUT_DIRECTORY': '/tmp',
+        }
+        base_env.update(env)
+        with patch.dict('os.environ', base_env, clear=False):
+            from daemons.base_daemon import BaseDaemon
+            import logging.handlers
+
+            class ConcreteDaemon(BaseDaemon):
+                def run(self): pass
+                def get_progress(self): return {}
+                def get_current_status(self): return {}
+
+            d = ConcreteDaemon(
+                name='test_setup_logger',
+                default_pid_file=str(tmp / 'test.pid'),
+                default_log_file=log_file,
+                default_stderr_log_file=str(tmp / 'test_error.log'),
+            )
+        return d
+
+    def test_uses_rotating_file_handler(self):
+        """setup_logger() 應使用 RotatingFileHandler，而非 WatchedFileHandler"""
+        import logging.handlers
+        d = self._make_daemon_with_env()
+        rotating = [h for h in d.logger.handlers
+                    if isinstance(h, logging.handlers.RotatingFileHandler)]
+        self.assertGreater(len(rotating), 0)
+
+    def test_default_max_bytes(self):
+        """預設 LOG_MAX_BYTES 應為 10MB"""
+        import logging.handlers
+        d = self._make_daemon_with_env()
+        handler = next(h for h in d.logger.handlers
+                       if isinstance(h, logging.handlers.RotatingFileHandler))
+        self.assertEqual(handler.maxBytes, 10 * 1024 * 1024)
+
+    def test_default_backup_count(self):
+        """預設 LOG_BACKUP_COUNT 應為 5"""
+        import logging.handlers
+        d = self._make_daemon_with_env()
+        handler = next(h for h in d.logger.handlers
+                       if isinstance(h, logging.handlers.RotatingFileHandler))
+        self.assertEqual(handler.backupCount, 5)
+
+    def test_custom_max_bytes(self):
+        """LOG_MAX_BYTES 環境變數應正確套用"""
+        import logging.handlers
+        d = self._make_daemon_with_env(LOG_MAX_BYTES='5242880')  # 5MB
+        handler = next(h for h in d.logger.handlers
+                       if isinstance(h, logging.handlers.RotatingFileHandler))
+        self.assertEqual(handler.maxBytes, 5 * 1024 * 1024)
+
+    def test_custom_backup_count(self):
+        """LOG_BACKUP_COUNT 環境變數應正確套用"""
+        import logging.handlers
+        d = self._make_daemon_with_env(LOG_BACKUP_COUNT='10')
+        handler = next(h for h in d.logger.handlers
+                       if isinstance(h, logging.handlers.RotatingFileHandler))
+        self.assertEqual(handler.backupCount, 10)
+
+
 if __name__ == '__main__':
     unittest.main()
