@@ -344,6 +344,19 @@ class TestDatabaseManager(unittest.TestCase):
         # 驗證 cursor 以 dictionary=False 建立
         mock_connection.cursor.assert_called_with(dictionary=False)
 
+    def test_dialect_property_returns_mariadb_dialect(self):
+        """測試 DB_TYPE=mariadb 時 dialect property 回傳 MariaDBDialect"""
+        from sql_dialect import MariaDBDialect
+        db_manager = self.DatabaseManager()
+        self.assertIsInstance(db_manager.dialect, MariaDBDialect)
+
+    def test_dialect_property_cached(self):
+        """測試 dialect property 快取同一實例"""
+        db_manager = self.DatabaseManager()
+        d1 = db_manager.dialect
+        d2 = db_manager.dialect
+        self.assertIs(d1, d2)
+
 
 class TestSQLiteDatabaseManager(unittest.TestCase):
     """SQLite 後端 DatabaseManager 整合測試（使用 :memory: 資料庫）"""
@@ -384,19 +397,30 @@ class TestSQLiteDatabaseManager(unittest.TestCase):
         """測試 db_type 回傳 sqlite"""
         self.assertEqual(self.db.db_type, 'sqlite')
 
-    def test_to_sqlite_placeholder(self):
-        """測試 %s 佔位符轉換為 ?"""
-        result = self.db._to_sqlite("SELECT * FROM t WHERE id=%s AND name=%s")
+    def test_dialect_property_returns_sqlite_dialect(self):
+        """測試 dialect property 回傳 SQLiteDialect 實例"""
+        from sql_dialect import SQLiteDialect
+        self.assertIsInstance(self.db.dialect, SQLiteDialect)
+
+    def test_dialect_property_cached(self):
+        """測試 dialect property 快取同一實例"""
+        d1 = self.db.dialect
+        d2 = self.db.dialect
+        self.assertIs(d1, d2)
+
+    def test_translate_query_placeholder(self):
+        """測試 dialect.translate_query 轉換 %s → ?"""
+        result = self.db.dialect.translate_query("SELECT * FROM t WHERE id=%s AND name=%s")
         self.assertEqual(result, "SELECT * FROM t WHERE id=? AND name=?")
 
-    def test_to_sqlite_insert_ignore(self):
-        """測試 INSERT IGNORE 轉換為 INSERT OR IGNORE"""
-        result = self.db._to_sqlite("INSERT IGNORE INTO t (a) VALUES (%s)")
+    def test_translate_query_insert_ignore(self):
+        """測試 dialect.translate_query 轉換 INSERT IGNORE → INSERT OR IGNORE"""
+        result = self.db.dialect.translate_query("INSERT IGNORE INTO t (a) VALUES (%s)")
         self.assertEqual(result, "INSERT OR IGNORE INTO t (a) VALUES (?)")
 
-    def test_to_sqlite_insert_ignore_case_insensitive(self):
+    def test_translate_query_insert_ignore_case_insensitive(self):
         """測試 insert ignore（小寫）也能正確轉換"""
-        result = self.db._to_sqlite("insert ignore into t (a) values (?)")
+        result = self.db.dialect.translate_query("insert ignore into t (a) values (?)")
         self.assertIn("INSERT OR IGNORE", result.upper())
 
     def test_execute_query_insert_returns_rowcount(self):

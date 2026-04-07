@@ -1,5 +1,4 @@
 import os
-import re
 import sqlite3
 import threading
 from contextlib import contextmanager
@@ -7,6 +6,8 @@ from dotenv import load_dotenv
 
 import mysql.connector
 from mysql.connector import pooling
+
+from sql_dialect import SqlDialect, create_dialect
 
 load_dotenv()
 
@@ -33,6 +34,7 @@ class DatabaseManager:
         self.pool = None             # MariaDB 連接池（延遲初始化）
         self._local = threading.local()  # SQLite per-thread 連線
         self._db_type = None         # 快取，避免重複讀取 env
+        self._dialect = None         # 快取，避免重複建立 SqlDialect 實例
 
     # ------------------------------------------------------------------
     # Backend selection
@@ -45,21 +47,20 @@ class DatabaseManager:
             self._db_type = os.getenv('DB_TYPE', 'mariadb').lower()
         return self._db_type
 
-    # ------------------------------------------------------------------
-    # Query translation（MariaDB → SQLite 方言）
-    # ------------------------------------------------------------------
+    @property
+    def dialect(self) -> SqlDialect:
+        """回傳目前後端對應的 SqlDialect 實例（延遲初始化，單次建立後快取）。
 
-    @staticmethod
-    def _to_sqlite(query):
-        """將 MariaDB SQL 方言自動轉換為 SQLite 相容語法。
-
-        轉換規則：
-        - 參數佔位符 %s → ?
-        - INSERT IGNORE … → INSERT OR IGNORE …
+        透過 sql_dialect.create_dialect() 工廠函式建立；
+        新增後端只需在 sql_dialect._DIALECTS 登錄，無需修改此類別。
         """
-        q = query.replace('%s', '?')
-        q = re.sub(r'\bINSERT\s+IGNORE\b', 'INSERT OR IGNORE', q, flags=re.IGNORECASE)
-        return q
+        if self._dialect is None:
+            self._dialect = create_dialect(self.db_type)
+        return self._dialect
+
+    # ------------------------------------------------------------------
+    # Query translation — delegated to SqlDialect
+    # ------------------------------------------------------------------
 
     # ------------------------------------------------------------------
     # MariaDB backend — connection pool
@@ -290,7 +291,7 @@ class DatabaseManager:
 
     def _sqlite_execute_query(self, query, params, fetch):
         conn = self._get_sqlite_conn()
-        translated = self._to_sqlite(query)
+        translated = self.dialect.translate_query(query)
         try:
             cursor = conn.execute(translated, params or ())
             if fetch:
@@ -310,7 +311,7 @@ class DatabaseManager:
         try:
             rowcounts = []
             for query, params in queries:
-                translated = self._to_sqlite(query)
+                translated = self.dialect.translate_query(query)
                 cursor = conn.execute(translated, params or ())
                 rowcounts.append(cursor.rowcount)
             conn.commit()

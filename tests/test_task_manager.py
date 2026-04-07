@@ -295,6 +295,8 @@ class TestResetTasksToPending(unittest.TestCase):
     @patch('task_manager.db_manager')
     def test_placeholders_match_id_count(self, mock_db):
         mock_db.execute_query.return_value = 2
+        # concat 表達式含一個 %s 佔位符，模擬真實後端行為
+        mock_db.dialect.concat.return_value = '%s'
         _repo().reset_tasks_to_pending([10, 20])
         query = mock_db.execute_query.call_args[0][0]
         params = mock_db.execute_query.call_args[0][1]
@@ -356,7 +358,8 @@ class TestCleanupOrphanedFlags(unittest.TestCase):
         second_query = mock_db.execute_query.call_args_list[1][0][0]
         self.assertIn("status = 'pending'", second_query)
         self.assertIn("is_processing = FALSE", second_query)
-        self.assertIn("INTERVAL 5 MINUTE", second_query)
+        # 驗證 interval_ago 以 5 分鐘為參數呼叫（實際表達式由 SqlDialect 負責，此處不重複測試）
+        mock_db.dialect.interval_ago.assert_called_once_with(5)
 
     @patch('task_manager.db_manager')
     def test_db_error_returns_zero(self, mock_db):
