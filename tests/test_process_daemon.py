@@ -27,7 +27,7 @@ def _make_process_daemon(**env_overrides):
         # ffmpeg timeout 預設值：明確設定以避免 .env 的真實值干擾測試
         'FFMPEG_TIMEOUT': '0',
         'FFMPEG_STALL_TIMEOUT': '0',
-        'FFMPEG_TIMEOUT_MULTIPLIER': '3.0',
+        'FFMPEG_TIMEOUT_MULTIPLIER': '2.0',
         'FFMPEG_TIMEOUT_MIN': '300',
         # 明確指定 log/pid/status 檔路徑到可寫入的 /tmp，
         # 避免 patch.dict 還原 env 後 load_dotenv() 的效果消失，
@@ -544,9 +544,9 @@ class TestDynamicTimeoutConfig(unittest.TestCase):
         self.assertEqual(d.ffmpeg_timeout, 7200)
 
     def test_default_multiplier(self):
-        """FFMPEG_TIMEOUT_MULTIPLIER 預設應為 3.0"""
+        """FFMPEG_TIMEOUT_MULTIPLIER 預設應為 2.0"""
         d = _make_process_daemon()
-        self.assertAlmostEqual(d.timeout_multiplier, 3.0)
+        self.assertAlmostEqual(d.timeout_multiplier, 2.0)
 
     def test_custom_multiplier(self):
         """FFMPEG_TIMEOUT_MULTIPLIER=5.0 應被正確讀取"""

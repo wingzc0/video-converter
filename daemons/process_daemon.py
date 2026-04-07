@@ -77,7 +77,7 @@ class ProcessDaemon(BaseDaemon):
 
         # 動態 timeout 參數（僅在 FFMPEG_TIMEOUT=0 時生效）
         # timeout = max(FFMPEG_TIMEOUT_MIN, video_duration * FFMPEG_TIMEOUT_MULTIPLIER)
-        self.timeout_multiplier = float(os.getenv('FFMPEG_TIMEOUT_MULTIPLIER', '3.0'))
+        self.timeout_multiplier = float(os.getenv('FFMPEG_TIMEOUT_MULTIPLIER', '2.0'))
         self.min_timeout = int(os.getenv('FFMPEG_TIMEOUT_MIN', '300'))
 
         # 時間限制設定
