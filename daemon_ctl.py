@@ -402,7 +402,7 @@ def cmd_status_process(daemon):
         print(f"   Workers    : {detail.get('active_workers', 0)}/{detail.get('max_workers', 0)}  |  Errors: {detail.get('error_count', 0)}")
 
     from daemons.process_daemon import get_time_restriction_status
-    if 'time_restriction_enabled' in detail:
+    if state == 'running' and 'time_restriction_enabled' in detail:
         tr = get_time_restriction_status(
             enabled=detail['time_restriction_enabled'],
             start_str=detail.get('time_restriction_start'),

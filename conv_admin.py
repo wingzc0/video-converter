@@ -155,8 +155,16 @@ def cmd_stats(failed_limit=5):
     # --- 時間限制狀態（優先讀 daemon 的 status 檔，確保與 daemon 實際設定一致）---
     import json as _json
     _status_file = Path(os.getenv('PROCESS_DAEMON_STATUS_FILE', './run/processor_status.json'))
+    _pid_file    = Path(os.getenv('PROCESS_DAEMON_PID_FILE',    './run/process_daemon.pid'))
     _detail = {}
-    if _status_file.exists():
+    _daemon_running = False
+    try:
+        _pid = int(_pid_file.read_text().strip())
+        os.kill(_pid, 0)          # 只確認程序存活，不發送信號
+        _daemon_running = True
+    except (FileNotFoundError, ValueError, ProcessLookupError, PermissionError):
+        pass
+    if _daemon_running and _status_file.exists():
         try:
             _detail = _json.loads(_status_file.read_text())
         except Exception:
