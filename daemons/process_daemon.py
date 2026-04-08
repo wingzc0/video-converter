@@ -398,9 +398,11 @@ class ProcessDaemon(BaseDaemon):
                         f"{self.allowed_start_time.strftime('%H:%M')}"
                     )
                     self.processing_progress['status'] = 'time_restricted'
-                    # 清空 task_queue：避免已排入的任務在限制期間被 worker 繼續執行
+                    # 清空 task_queue：避免已排入的任務在限制期間被 worker 繼續執行。
+                    # 使用 get_nowait() + except Empty 而非 empty() + get_nowait()，
+                    # 避免兩者之間 worker 搶先消費造成競爭視窗。
                     drained = 0
-                    while not self.task_queue.empty():
+                    while True:
                         try:
                             self.task_queue.get_nowait()
                             self.task_queue.task_done()
