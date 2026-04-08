@@ -90,7 +90,13 @@ def setup_rotating_logger(
 
 
 def _add_console_handler(logger: logging.Logger) -> None:
-    """在 logger 上加入 stdout StreamHandler（內部輔助函式）。"""
+    """在 logger 上加入 stdout StreamHandler（內部輔助函式）。
+
+    若已存在 console StreamHandler 則跳過，避免重複呼叫累積 handler。
+    """
+    for h in logger.handlers:
+        if isinstance(h, logging.StreamHandler) and not isinstance(h, logging.FileHandler):
+            return  # 已有 console handler，不重複加入
     try:
         handler = logging.StreamHandler(sys.stdout)
         handler.setFormatter(_LOG_FORMATTER)

@@ -227,16 +227,20 @@ class TestSetupRotatingLoggerFallback(unittest.TestCase):
         logger.handlers.clear()
 
     def test_fallback_to_console_on_file_error(self):
-        """RotatingFileHandler 建立失敗時，應回退加入 StreamHandler"""
+        """RotatingFileHandler 建立失敗時，應回退加入 StreamHandler（非 FileHandler）"""
         with patch('logging_utils.Path') as mock_path_cls:
             mock_path_cls.return_value.parent.mkdir.side_effect = PermissionError('no access')
             with patch('logging_utils.logging.handlers.RotatingFileHandler',
                        side_effect=PermissionError('no access')):
                 logger = setup_rotating_logger('test_fallback', '/no/such/path/test.log')
 
-        stream_handlers = [h for h in logger.handlers
-                           if isinstance(h, logging.StreamHandler)]
-        self.assertGreater(len(stream_handlers), 0)
+        # 回退時只有純 StreamHandler（stdout），不應有任何 FileHandler
+        file_handlers = [h for h in logger.handlers
+                         if isinstance(h, logging.FileHandler)]
+        stream_only = [h for h in logger.handlers
+                       if type(h) is logging.StreamHandler]
+        self.assertEqual(len(file_handlers), 0, "fallback 不應有任何 FileHandler")
+        self.assertGreater(len(stream_only), 0, "fallback 應有 StreamHandler")
 
 
 class TestBaseDaemonSetupLoggerNoConsole(unittest.TestCase):

@@ -4,6 +4,8 @@ Unit tests for daemons/base_daemon.py
 """
 import os
 import sys
+import logging
+import logging.handlers
 import unittest
 from pathlib import Path
 from unittest.mock import MagicMock, patch
@@ -237,6 +239,61 @@ class TestSetupLogger(unittest.TestCase):
         handler = next(h for h in d.logger.handlers
                        if isinstance(h, logging.handlers.RotatingFileHandler))
         self.assertEqual(handler.backupCount, 10)
+
+
+# ---------------------------------------------------------------------------
+# run_in_foreground — console handler
+# ---------------------------------------------------------------------------
+
+class TestRunInForegroundConsole(unittest.TestCase):
+    """run_in_foreground() 應在執行前加入 console (StreamHandler)"""
+
+    def _make_daemon(self, name='test_fg_console'):
+        import tempfile
+        tmp = Path(tempfile.mkdtemp())
+        with patch.dict('os.environ',
+                        {'INPUT_DIRECTORY': '/tmp', 'OUTPUT_DIRECTORY': '/tmp'},
+                        clear=False):
+            from daemons.base_daemon import BaseDaemon
+
+            class StubDaemon(BaseDaemon):
+                ran = False
+                def run(self):
+                    StubDaemon.ran = True
+                    self.is_running = False   # 立即結束主迴圈
+                def get_progress(self): return {}
+                def get_current_status(self): return {}
+
+            d = StubDaemon(
+                name=name,
+                default_pid_file=str(tmp / 'test.pid'),
+                default_log_file=str(tmp / 'test.log'),
+                default_stderr_log_file=str(tmp / 'test_err.log'),
+            )
+        return d
+
+    def _stream_only_handlers(self, logger):
+        """回傳純 StreamHandler（排除 RotatingFileHandler 等 FileHandler 子類）"""
+        return [h for h in logger.handlers
+                if type(h) is logging.StreamHandler]
+
+    def test_no_console_handler_before_foreground(self):
+        """setup_logger() 後不應有 console StreamHandler"""
+        d = self._make_daemon('test_fg_no_console')
+        self.assertEqual(len(self._stream_only_handlers(d.logger)), 0)
+
+    def test_console_handler_added_by_run_in_foreground(self):
+        """run_in_foreground() 呼叫後應加入 console StreamHandler"""
+        d = self._make_daemon('test_fg_with_console')
+        d.run_in_foreground()
+        self.assertGreater(len(self._stream_only_handlers(d.logger)), 0)
+
+    def test_run_in_foreground_idempotent_console_handler(self):
+        """run_in_foreground() 重複呼叫不應累積多個 console StreamHandler"""
+        d = self._make_daemon('test_fg_idempotent')
+        d.run_in_foreground()
+        d.run_in_foreground()
+        self.assertEqual(len(self._stream_only_handlers(d.logger)), 1)
 
 
 if __name__ == '__main__':
