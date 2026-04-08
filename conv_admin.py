@@ -152,18 +152,36 @@ def cmd_stats(failed_limit=5):
             print(f"    [{t['id']}] {Path(t['input_path']).name}")
             print(f"          error={t['error_message']}  retries={t['retry_count']}  at={t['updated_at']}")
 
-    # --- 時間限制狀態 ---
-    tr = get_time_restriction_status()
+    # --- 時間限制狀態（優先讀 daemon 的 status 檔，確保與 daemon 實際設定一致）---
+    import json as _json
+    _status_file = Path(os.getenv('PROCESS_DAEMON_STATUS_FILE', './run/processor_status.json'))
+    _detail = {}
+    if _status_file.exists():
+        try:
+            _detail = _json.loads(_status_file.read_text())
+        except Exception:
+            pass
+
+    if 'time_restriction_enabled' in _detail:
+        tr = get_time_restriction_status(
+            enabled=_detail['time_restriction_enabled'],
+            start_str=_detail.get('time_restriction_start'),
+            end_str=_detail.get('time_restriction_end'),
+        )
+    else:
+        tr = get_time_restriction_status()  # daemon 未執行，fallback 讀 env
+
     print(f"\n=== Time Restriction ===")
     if not tr['enabled']:
         print("  Status : disabled (always allowed)")
     else:
         window = f"{tr['start'].strftime('%H:%M')} – {tr['end'].strftime('%H:%M')}"
+        suffix = "" if tr['source'] == 'daemon' else "  ⚠️  (daemon not running, showing .env)"
         if tr['allowed']:
-            print(f"  Status : ALLOWED  (window {window})")
+            print(f"  Status : ALLOWED  (window {window}){suffix}")
         else:
             wait_m, wait_s = divmod(tr['wait_secs'], 60)
-            print(f"  Status : RESTRICTED  (window {window})")
+            print(f"  Status : RESTRICTED  (window {window}){suffix}")
             print(f"  Next window in : {wait_m}m {wait_s:02d}s")
 
 # ---------------------------------------------------------------------------

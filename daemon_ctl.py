@@ -402,16 +402,24 @@ def cmd_status_process(daemon):
         print(f"   Workers    : {detail.get('active_workers', 0)}/{detail.get('max_workers', 0)}  |  Errors: {detail.get('error_count', 0)}")
 
     from daemons.process_daemon import get_time_restriction_status
-    tr = get_time_restriction_status()
+    if 'time_restriction_enabled' in detail:
+        tr = get_time_restriction_status(
+            enabled=detail['time_restriction_enabled'],
+            start_str=detail.get('time_restriction_start'),
+            end_str=detail.get('time_restriction_end'),
+        )
+    else:
+        tr = get_time_restriction_status()  # daemon 未執行，fallback 讀 env
     if not tr['enabled']:
         print(f"   Time limit : disabled")
     else:
         window = f"{tr['start'].strftime('%H:%M')} – {tr['end'].strftime('%H:%M')}"
+        suffix = "" if tr['source'] == 'daemon' else "  ⚠️  (daemon not running, showing .env)"
         if tr['allowed']:
-            print(f"   Time limit : ✅ allowed  (window {window})")
+            print(f"   Time limit : ✅ allowed  (window {window}){suffix}")
         else:
             wait_m, wait_s = divmod(tr['wait_secs'], 60)
-            print(f"   Time limit : 🚫 restricted  (window {window},  next in {wait_m}m {wait_s:02d}s)")
+            print(f"   Time limit : 🚫 restricted  (window {window},  next in {wait_m}m {wait_s:02d}s){suffix}")
 
 
 # ---------------------------------------------------------------------------

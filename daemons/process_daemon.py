@@ -23,23 +23,37 @@ def _parse_allowed_time(time_str: str, default: dtime) -> dtime:
         return default
 
 
-def get_time_restriction_status() -> dict:
-    """讀取環境變數，回傳時間限制的完整狀態。
+def get_time_restriction_status(
+    enabled: bool | None = None,
+    start_str: str | None = None,
+    end_str: str | None = None,
+) -> dict:
+    """回傳時間限制的完整狀態。
+
+    當 enabled/start_str/end_str 為 None 時從環境變數讀取（適用於 daemon 未執行的情況）。
+    傳入參數時使用傳入值（適用於從 daemon status 檔讀取真實設定）。
 
     Returns:
         dict with keys:
-            enabled (bool):  ENABLE_TIME_RESTRICTION 是否為 true
+            enabled (bool):  是否啟用時間限制
             allowed (bool):  目前時間是否在允許時段（enabled=False 時恆為 True）
             start   (dtime): 允許開始時間
             end     (dtime): 允許結束時間
             wait_secs (int): 距下一個允許時段的秒數（allowed=True 時為 0）
+            source (str):    'daemon'（從 status 檔讀）或 'env'（從環境變數讀）
     """
-    enabled = os.getenv('ENABLE_TIME_RESTRICTION', 'false').strip().lower() == 'true'
-    start = _parse_allowed_time(os.getenv('ALLOWED_START_TIME', '22:00'), dtime(22, 0))
-    end   = _parse_allowed_time(os.getenv('ALLOWED_END_TIME',   '06:00'), dtime(6,  0))
+    if enabled is None:
+        enabled = os.getenv('ENABLE_TIME_RESTRICTION', 'false').strip().lower() == 'true'
+        start = _parse_allowed_time(os.getenv('ALLOWED_START_TIME', '22:00'), dtime(22, 0))
+        end   = _parse_allowed_time(os.getenv('ALLOWED_END_TIME',   '06:00'), dtime(6,  0))
+        source = 'env'
+    else:
+        start = _parse_allowed_time(start_str or '22:00', dtime(22, 0))
+        end   = _parse_allowed_time(end_str   or '06:00', dtime(6,  0))
+        source = 'daemon'
 
     if not enabled:
-        return dict(enabled=False, allowed=True, start=start, end=end, wait_secs=0)
+        return dict(enabled=False, allowed=True, start=start, end=end, wait_secs=0, source=source)
 
     current = datetime.now().time()
     if start > end:
@@ -55,7 +69,7 @@ def get_time_restriction_status() -> dict:
             target += timedelta(days=1)
         wait_secs = max(0, int((target - now).total_seconds()))
 
-    return dict(enabled=True, allowed=allowed, start=start, end=end, wait_secs=wait_secs)
+    return dict(enabled=True, allowed=allowed, start=start, end=end, wait_secs=wait_secs, source=source)
 
 class ProcessDaemon(BaseDaemon):
     """處理 Daemon，從資料庫取出 pending 任務並以 ffmpeg 轉檔為 480p。
@@ -515,5 +529,9 @@ class ProcessDaemon(BaseDaemon):
             'max_workers': self.max_workers,
             'error_count': len(self.processing_progress['errors']),
             'errors': self.processing_progress['errors'][:10],  # 只保留最近10個錯誤
-            'last_update': datetime.now().isoformat()
+            'last_update': datetime.now().isoformat(),
+            # daemon 啟動時讀取的時間限制設定（非目前 .env 內容）
+            'time_restriction_enabled': self.enable_time_restriction,
+            'time_restriction_start': self.allowed_start_time.strftime('%H:%M'),
+            'time_restriction_end': self.allowed_end_time.strftime('%H:%M'),
         }
