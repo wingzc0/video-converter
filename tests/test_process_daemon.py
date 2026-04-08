@@ -44,23 +44,24 @@ def _make_process_daemon(**env_overrides):
 
 
 class TestParseTime(unittest.TestCase):
-    """ProcessDaemon._parse_time() 靜態方法"""
+    """_parse_allowed_time() 模組層級函式"""
 
     def setUp(self):
-        self.daemon = _make_process_daemon()
+        from daemons.process_daemon import _parse_allowed_time
+        self._parse = _parse_allowed_time
 
     def test_valid_time(self):
-        t = self.daemon._parse_time('14:30')
+        t = self._parse('14:30', dtime(22, 0))
         self.assertEqual(t, dtime(14, 30))
 
     def test_midnight(self):
-        self.assertEqual(self.daemon._parse_time('00:00'), dtime(0, 0))
+        self.assertEqual(self._parse('00:00', dtime(22, 0)), dtime(0, 0))
 
     def test_invalid_falls_back_to_2200(self):
-        self.assertEqual(self.daemon._parse_time('not_a_time'), dtime(22, 0))
+        self.assertEqual(self._parse('not_a_time', dtime(22, 0)), dtime(22, 0))
 
     def test_with_leading_space(self):
-        self.assertEqual(self.daemon._parse_time(' 08:00'), dtime(8, 0))
+        self.assertEqual(self._parse(' 08:00', dtime(22, 0)), dtime(8, 0))
 
 
 class TestIsTimeAllowed(unittest.TestCase):

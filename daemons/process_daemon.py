@@ -1,6 +1,6 @@
 import time
 import threading
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, time as dtime
 from .base_daemon import BaseDaemon, _get_process_uptime
 from converter import convert_to_480p, get_video_duration
 from task_manager import TaskRepository
@@ -8,6 +8,54 @@ import queue
 from pathlib import Path
 import os
 import signal
+
+
+# ---------------------------------------------------------------------------
+# 時間限制輔助函式（模組層級，可供 conv_admin.py 等外部工具 import）
+# ---------------------------------------------------------------------------
+
+def _parse_allowed_time(time_str: str, default: dtime) -> dtime:
+    """將 'HH:MM' 字串轉為 datetime.time 物件；解析失敗回傳 default。"""
+    try:
+        h, m = map(int, time_str.strip().split(':'))
+        return dtime(h, m)
+    except Exception:
+        return default
+
+
+def get_time_restriction_status() -> dict:
+    """讀取環境變數，回傳時間限制的完整狀態。
+
+    Returns:
+        dict with keys:
+            enabled (bool):  ENABLE_TIME_RESTRICTION 是否為 true
+            allowed (bool):  目前時間是否在允許時段（enabled=False 時恆為 True）
+            start   (dtime): 允許開始時間
+            end     (dtime): 允許結束時間
+            wait_secs (int): 距下一個允許時段的秒數（allowed=True 時為 0）
+    """
+    enabled = os.getenv('ENABLE_TIME_RESTRICTION', 'false').strip().lower() == 'true'
+    start = _parse_allowed_time(os.getenv('ALLOWED_START_TIME', '22:00'), dtime(22, 0))
+    end   = _parse_allowed_time(os.getenv('ALLOWED_END_TIME',   '06:00'), dtime(6,  0))
+
+    if not enabled:
+        return dict(enabled=False, allowed=True, start=start, end=end, wait_secs=0)
+
+    current = datetime.now().time()
+    if start > end:
+        allowed = current >= start or current <= end
+    else:
+        allowed = start <= current <= end
+
+    wait_secs = 0
+    if not allowed:
+        now = datetime.now()
+        target = now.replace(hour=start.hour, minute=start.minute, second=0, microsecond=0)
+        if target <= now:
+            target += timedelta(days=1)
+        wait_secs = max(0, int((target - now).total_seconds()))
+
+    return dict(enabled=True, allowed=allowed, start=start, end=end, wait_secs=wait_secs)
 
 class ProcessDaemon(BaseDaemon):
     """處理 Daemon，從資料庫取出 pending 任務並以 ffmpeg 轉檔為 480p。
@@ -82,8 +130,8 @@ class ProcessDaemon(BaseDaemon):
 
         # 時間限制設定
         self.enable_time_restriction = os.getenv('ENABLE_TIME_RESTRICTION', 'false').strip().lower() == 'true'
-        self.allowed_start_time = self._parse_time(os.getenv('ALLOWED_START_TIME', '22:00'))
-        self.allowed_end_time = self._parse_time(os.getenv('ALLOWED_END_TIME', '06:00'))
+        self.allowed_start_time = _parse_allowed_time(os.getenv('ALLOWED_START_TIME', '22:00'), dtime(22, 0))
+        self.allowed_end_time   = _parse_allowed_time(os.getenv('ALLOWED_END_TIME',   '06:00'), dtime(6,  0))
         
         # 驗證設定
         self.validate_settings()
@@ -100,17 +148,6 @@ class ProcessDaemon(BaseDaemon):
         )
         if self.enable_time_restriction:
             self.logger.info(f"Time restriction enabled: {self.allowed_start_time.strftime('%H:%M')} - {self.allowed_end_time.strftime('%H:%M')}")
-
-    @staticmethod
-    def _parse_time(time_str):
-        """將 'HH:MM' 字串轉為 datetime.time 物件"""
-        try:
-            h, m = map(int, time_str.strip().split(':'))
-            from datetime import time as dtime
-            return dtime(h, m)
-        except Exception:
-            from datetime import time as dtime
-            return dtime(22, 0)
 
     def is_time_allowed(self):
         """檢查目前時間是否在允許轉檔的時段內"""

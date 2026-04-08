@@ -401,6 +401,18 @@ def cmd_status_process(daemon):
         print(f"   Completed  : {detail.get('tasks_completed', 0)}  |  Failed: {detail.get('tasks_failed', 0)}")
         print(f"   Workers    : {detail.get('active_workers', 0)}/{detail.get('max_workers', 0)}  |  Errors: {detail.get('error_count', 0)}")
 
+    from daemons.process_daemon import get_time_restriction_status
+    tr = get_time_restriction_status()
+    if not tr['enabled']:
+        print(f"   Time limit : disabled")
+    else:
+        window = f"{tr['start'].strftime('%H:%M')} – {tr['end'].strftime('%H:%M')}"
+        if tr['allowed']:
+            print(f"   Time limit : ✅ allowed  (window {window})")
+        else:
+            wait_m, wait_s = divmod(tr['wait_secs'], 60)
+            print(f"   Time limit : 🚫 restricted  (window {window},  next in {wait_m}m {wait_s:02d}s)")
+
 
 # ---------------------------------------------------------------------------
 # 主程式

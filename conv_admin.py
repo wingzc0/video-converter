@@ -25,6 +25,7 @@ from pathlib import Path
 from task_manager import TaskRepository
 from converter import get_video_info, compute_output_name
 from dotenv import load_dotenv
+from daemons.process_daemon import get_time_restriction_status
 
 load_dotenv()
 
@@ -150,6 +151,20 @@ def cmd_stats(failed_limit=5):
         for t in task_repo.get_recent_failed_tasks(failed_limit):
             print(f"    [{t['id']}] {Path(t['input_path']).name}")
             print(f"          error={t['error_message']}  retries={t['retry_count']}  at={t['updated_at']}")
+
+    # --- 時間限制狀態 ---
+    tr = get_time_restriction_status()
+    print(f"\n=== Time Restriction ===")
+    if not tr['enabled']:
+        print("  Status : disabled (always allowed)")
+    else:
+        window = f"{tr['start'].strftime('%H:%M')} – {tr['end'].strftime('%H:%M')}"
+        if tr['allowed']:
+            print(f"  Status : ALLOWED  (window {window})")
+        else:
+            wait_m, wait_s = divmod(tr['wait_secs'], 60)
+            print(f"  Status : RESTRICTED  (window {window})")
+            print(f"  Next window in : {wait_m}m {wait_s:02d}s")
 
 # ---------------------------------------------------------------------------
 # Retry failed / cleanup stale  (one-shot maintenance)
