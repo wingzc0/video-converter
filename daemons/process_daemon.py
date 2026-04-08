@@ -252,6 +252,11 @@ class ProcessDaemon(BaseDaemon):
                 task_id = self.task_queue.get(timeout=1)
             except queue.Empty:
                 continue
+            # 取出任務後再次確認時間限制，避免 queue 清空期間的競爭視窗
+            if not self.is_time_allowed():
+                self.logger.debug(f"Worker {worker_id}: skipping task {task_id} (time restriction)")
+                self.task_queue.task_done()
+                continue
             lock_acquired = False
             try:
                 # 取得 DB 層級的任務鎖，防止多 worker（或跨程序）同時處理同一任務；
@@ -393,6 +398,17 @@ class ProcessDaemon(BaseDaemon):
                         f"{self.allowed_start_time.strftime('%H:%M')}"
                     )
                     self.processing_progress['status'] = 'time_restricted'
+                    # 清空 task_queue：避免已排入的任務在限制期間被 worker 繼續執行
+                    drained = 0
+                    while not self.task_queue.empty():
+                        try:
+                            self.task_queue.get_nowait()
+                            self.task_queue.task_done()
+                            drained += 1
+                        except queue.Empty:
+                            break
+                    if drained:
+                        self.logger.info(f"Drained {drained} queued task(s) due to time restriction")
                     # 分段等待，以便能及時響應停止訊號
                     waited = 0
                     while self.is_running and waited < wait_secs:
