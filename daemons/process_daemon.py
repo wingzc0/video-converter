@@ -397,6 +397,13 @@ class ProcessDaemon(BaseDaemon):
                         f"Time restriction active. Waiting {wait_secs:.0f}s until "
                         f"{self.allowed_start_time.strftime('%H:%M')}"
                     )
+                    # 已在執行中的轉檔（ffmpeg 已啟動）不會被中斷，會自行完成
+                    active = sum(1 for t in self.worker_threads if t.is_alive())
+                    if active:
+                        self.logger.info(
+                            f"{active} worker(s) still running — in-progress conversions "
+                            "will complete before time restriction fully takes effect"
+                        )
                     self.processing_progress['status'] = 'time_restricted'
                     # 清空 task_queue：避免已排入的任務在限制期間被 worker 繼續執行。
                     # 使用 get_nowait() + except Empty 而非 empty() + get_nowait()，
