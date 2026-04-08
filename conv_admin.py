@@ -167,6 +167,8 @@ def cmd_stats(failed_limit=5):
     if _daemon_running and _status_file.exists():
         try:
             _detail = _json.loads(_status_file.read_text())
+            if _detail.get('pid') != _pid:
+                _detail = {}  # PID 不符，status 檔為舊資料
         except Exception:
             pass
 

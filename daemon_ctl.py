@@ -390,6 +390,8 @@ def cmd_status_process(daemon):
     if status_file.exists():
         try:
             detail = json.loads(status_file.read_text())
+            if detail.get('pid') != pid:
+                detail = {}  # PID 不符，status 檔為舊資料
         except Exception:
             pass
 
