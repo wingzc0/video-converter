@@ -232,6 +232,9 @@ python3 init_db.py          # 自動建立 ./data/converter.db 及所有資料�
 | `FFMPEG_TIMEOUT_MULTIPLIER` | 動態 timeout 倍數（`FFMPEG_TIMEOUT=0` 時生效）；`timeout = max(FFMPEG_TIMEOUT_MIN, 時長 × 此值)`（預設：`2.0`） |
 | `FFMPEG_TIMEOUT_MIN` | 動態 timeout 最低保障秒數，避免極短影片 timeout 過短（預設：`300`） |
 | `FFMPEG_STALL_TIMEOUT` | ffmpeg 無進度輸出超時（秒）；適用於 NFS I/O stall 導致 ffmpeg 停住但不退出的情況；設 `0` 停用（預設：`300`，即 5 分鐘） |
+| `ENABLE_TIME_RESTRICTION` | 設為 `true` 時啟用轉檔時間限制，僅在指定時段內允許轉檔（預設：`false`） |
+| `ALLOWED_START_TIME` | 允許轉檔的開始時間，`HH:MM` 格式（預設：`22:00`） |
+| `ALLOWED_END_TIME` | 允許轉檔的結束時間，`HH:MM` 格式（預設：`06:00`）。支援跨日時段（如 22:00–06:00） |
 | `API_SERVER_HOST`、`API_SERVER_PORT`、`API_SERVER_URL` | API 伺服器設定 |
 | `LOG_LEVEL` | 日誌等級 |
 | `LOG_MAX_BYTES` | log 單檔大小上限（位元組）；超過自動輪替（預設：`10485760`，即 10MB） |
@@ -287,6 +290,7 @@ python3 daemon_ctl.py api status
    Processing : 668  |  Queue: 664
    Completed  : 135  |  Failed: 0
    Workers    : 1/1  |  Errors: 0
+   Time limit : 🚫 restricted  (window 22:00 – 06:00,  next in 215m 30s)
 ```
 
 所有指令也支援 `--foreground`（或 `-f`）旗標，在前景執行（適合除錯或 systemd 管理）：
@@ -353,7 +357,7 @@ python monitor_daemons.py -c
 | 指令 | 說明 |
 |---|---|
 | `--show-dirs` | 預覽輸入目錄結構（含忽略目錄標示） |
-| `--stats` | 顯示資料庫任務統計（現在時間、各狀態數量、目前轉檔中任務清單、平均耗時、最近失敗詳情） |
+| `--stats` | 顯示資料庫任務統計（現在時間、各狀態數量、目前轉檔中任務清單、平均耗時、最近失敗詳情）及時間限制狀態 |
 | `--retry-failed` | 手動將失敗任務重置為 pending（僅 retry_count < max_retries） |
 | `--reset-maxed-failed` | 手動重設已達重試上限的失敗任務為 pending（retry_count 歸零） |
 | `--max-retries N` | 重試次數上限（預設 3，搭配 --retry-failed / --reset-maxed-failed） |
