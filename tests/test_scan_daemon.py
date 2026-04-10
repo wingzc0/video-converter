@@ -448,6 +448,30 @@ class TestCleanupDeletedSources(unittest.TestCase):
 
         self.assertEqual(deleted, 0)  # 不計入 deleted，因為 delete_task 回傳 False
 
+    @patch('task_manager.db_manager')
+    def test_output_deleted_but_task_claimed_logs_warning(self, mock_db):
+        """output 已成功刪除，但 delete_task 回傳 False（任務被搶走），應記錄 warning"""
+        import logging
+        output_file = self.output_dir / '480p_video.mp4'
+        output_file.touch()
+
+        mock_db.execute_query.return_value = [{
+            'id': 6,
+            'input_path': str(self.input_dir / 'video.mp4'),  # source 不建立
+            'output_path': str(output_file),
+            'status': 'pending',
+        }]
+        # DELETE 命中 0 列：任務已被 process_daemon 搶走
+        mock_db.execute_transaction.return_value = [0]
+
+        daemon = self._make_daemon()
+        with self.assertLogs(daemon.logger.name, level=logging.WARNING) as cm:
+            deleted = daemon.cleanup_deleted_sources()
+
+        self.assertEqual(deleted, 0)
+        self.assertFalse(output_file.exists())  # output 確實已被刪除
+        self.assertTrue(any('claimed by process daemon' in msg for msg in cm.output))
+
 
 class TestGetTasksForSourceCleanupEscape(unittest.TestCase):
     """get_tasks_for_source_cleanup() — LIKE 模式 escape 驗證"""

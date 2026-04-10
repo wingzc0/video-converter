@@ -277,6 +277,15 @@ class ScanDaemon(BaseDaemon):
                     f"(status={status}): {Path(task['input_path']).name}"
                 )
                 deleted += 1
+            else:
+                # delete_task() 回傳 False：任務在查詢後被 process_daemon 搶走（pending→processing）。
+                # output 若已刪除（見上方 unlink），磁碟與 DB 狀態暫時不一致，
+                # 但 ffmpeg 會因 source 不存在而失敗，任務最終落入 failed，
+                # 下一個 cleanup cycle 會清除它。
+                self.logger.warning(
+                    f"Task [{task_id}] was claimed by process daemon during cleanup "
+                    f"(source={Path(task['input_path']).name}); will retry next cycle"
+                )
 
         if deleted:
             self.logger.info(f"Source cleanup: removed {deleted} task(s) for deleted source files")
