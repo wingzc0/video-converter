@@ -317,5 +317,119 @@ class TestScanDirectoryFiltering(unittest.TestCase):
         self.assertGreater(len(update_calls), 0)
 
 
+class TestCleanupDeletedSources(unittest.TestCase):
+    """cleanup_deleted_sources() — source 刪除後清理輸出檔與 DB 記錄"""
+
+    def setUp(self):
+        import tempfile
+        self.tmp = Path(tempfile.mkdtemp())
+        self.input_dir  = self.tmp / 'input'
+        self.output_dir = self.tmp / 'output'
+        self.input_dir.mkdir()
+        self.output_dir.mkdir()
+
+    def _make_daemon(self):
+        with patch.dict('os.environ', {
+            'INPUT_DIRECTORY': str(self.input_dir),
+            'OUTPUT_DIRECTORY': str(self.output_dir),
+            'IGNORE_DIRECTORIES': '',
+        }):
+            from daemons.scan_daemon import ScanDaemon
+            return ScanDaemon(scan_interval=60)
+
+    @patch('task_manager.db_manager')
+    def test_deletes_output_and_task_when_source_removed(self, mock_db):
+        """source 不存在且有 output 時，刪除 output 並移除 DB 記錄"""
+        output_file = self.output_dir / '480p_video.mp4'
+        output_file.touch()
+
+        mock_db.execute_query.return_value = [{
+            'id': 1,
+            'input_path': str(self.input_dir / 'video.mp4'),  # source 不建立
+            'output_path': str(output_file),
+            'status': 'completed',
+        }]
+        mock_db.execute_transaction.return_value = [1, 1]
+
+        daemon = self._make_daemon()
+        deleted = daemon.cleanup_deleted_sources()
+
+        self.assertEqual(deleted, 1)
+        self.assertFalse(output_file.exists())            # output 已刪除
+        mock_db.execute_transaction.assert_called_once()  # delete_task 已呼叫
+
+    @patch('task_manager.db_manager')
+    def test_deletes_task_only_when_no_output(self, mock_db):
+        """source 不存在且無 output 時（pending/failed），只移除 DB 記錄"""
+        mock_db.execute_query.return_value = [{
+            'id': 2,
+            'input_path': str(self.input_dir / 'video.mp4'),  # source 不建立
+            'output_path': '',
+            'status': 'pending',
+        }]
+        mock_db.execute_transaction.return_value = [1, 1]
+
+        daemon = self._make_daemon()
+        deleted = daemon.cleanup_deleted_sources()
+
+        self.assertEqual(deleted, 1)
+        mock_db.execute_transaction.assert_called_once()
+
+    @patch('task_manager.db_manager')
+    def test_skips_task_when_source_still_exists(self, mock_db):
+        """source 仍存在時，不應刪除任何東西"""
+        source = self.input_dir / 'alive.mp4'
+        source.touch()
+        output_file = self.output_dir / '480p_alive.mp4'
+        output_file.touch()
+
+        mock_db.execute_query.return_value = [{
+            'id': 3,
+            'input_path': str(source),
+            'output_path': str(output_file),
+            'status': 'completed',
+        }]
+
+        daemon = self._make_daemon()
+        deleted = daemon.cleanup_deleted_sources()
+
+        self.assertEqual(deleted, 0)
+        self.assertTrue(output_file.exists())          # output 未被刪除
+        mock_db.execute_transaction.assert_not_called()
+
+    @patch('task_manager.db_manager')
+    def test_skips_processing_tasks(self, mock_db):
+        """cleanup 方法的 SQL 查詢已排除 processing 任務（get_tasks_for_source_cleanup 以 status != processing 過濾）"""
+        # 模擬 DB 回傳空清單（processing 任務被過濾掉）
+        mock_db.execute_query.return_value = []
+
+        daemon = self._make_daemon()
+        deleted = daemon.cleanup_deleted_sources()
+
+        self.assertEqual(deleted, 0)
+        mock_db.execute_transaction.assert_not_called()
+
+    @patch('task_manager.db_manager')
+    def test_keeps_task_when_output_deletion_fails(self, mock_db):
+        """output 檔刪除失敗時，應保留 DB 記錄（避免資料不一致）"""
+        output_file = self.output_dir / '480p_video.mp4'
+        output_file.touch()
+
+        mock_db.execute_query.return_value = [{
+            'id': 4,
+            'input_path': str(self.input_dir / 'video.mp4'),
+            'output_path': str(output_file),
+            'status': 'completed',
+        }]
+
+        daemon = self._make_daemon()
+        # mock Path.unlink() 拋出 OSError
+        with patch.object(Path, 'unlink', side_effect=OSError("Permission denied")):
+            deleted = daemon.cleanup_deleted_sources()
+
+        self.assertEqual(deleted, 0)                       # 沒有刪除任何 task
+        mock_db.execute_transaction.assert_not_called()    # delete_task 未呼叫
+
+
 if __name__ == '__main__':
     unittest.main()

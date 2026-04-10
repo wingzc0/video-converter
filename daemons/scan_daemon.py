@@ -74,6 +74,7 @@ class ScanDaemon(BaseDaemon):
             'last_scan_time': None,
             'files_scanned': 0,
             'tasks_added': 0,
+            'sources_cleaned': 0,
             'errors': []
         }
         
@@ -232,6 +233,55 @@ class ScanDaemon(BaseDaemon):
         """跳過已轉換的輸出檔案（以 480p_ 開頭）"""
         return filename.startswith('480p_')
     
+    def cleanup_deleted_sources(self):
+        """清理 source 檔案已被刪除的任務及對應輸出檔。
+
+        掃描完成後呼叫，確保 destination 目錄與 source 目錄保持一致：
+        - 查詢位於 base_input_dir 下、且非 processing 狀態的所有任務
+        - 若 input_path 不存在，刪除 output_path（若有），再從 DB 移除任務記錄
+        - 跳過 processing 任務（ffmpeg 正在執行，由 stale 清理機制負責）
+
+        Returns:
+            int: 本次刪除的任務數量。
+        """
+        tasks = self.task_repo.get_tasks_for_source_cleanup(str(self.base_input_dir))
+        if not tasks:
+            return 0
+
+        deleted = 0
+        for task in tasks:
+            if Path(task['input_path']).exists():
+                continue
+
+            task_id     = task['id']
+            output_path = task.get('output_path') or ''
+            status      = task.get('status', '')
+
+            # 刪除輸出檔（completed 任務才會有輸出檔；pending/failed 通常尚未生成）
+            if output_path and Path(output_path).exists():
+                try:
+                    Path(output_path).unlink()
+                    self.logger.info(
+                        f"Deleted output for removed source: {Path(output_path).name}"
+                    )
+                except OSError as e:
+                    error_msg = f"Failed to delete output {output_path}: {e}"
+                    self.logger.error(error_msg)
+                    self.scan_progress['errors'].append(error_msg)
+                    continue  # 輸出檔刪不掉時保留 DB 記錄，避免資料不一致
+
+            if self.task_repo.delete_task(task_id):
+                self.logger.info(
+                    f"Removed task [{task_id}] for deleted source "
+                    f"(status={status}): {Path(task['input_path']).name}"
+                )
+                deleted += 1
+
+        if deleted:
+            self.logger.info(f"Source cleanup: removed {deleted} task(s) for deleted source files")
+
+        return deleted
+
     def run(self):
         """執行掃描 daemon"""
         self.logger.info("Scan daemon started")
@@ -239,6 +289,7 @@ class ScanDaemon(BaseDaemon):
         while self.is_running:
             try:
                 self.scan_directory()
+                self.scan_progress['sources_cleaned'] += self.cleanup_deleted_sources()
                 
                 # 等待下次掃描
                 for _ in range(self.scan_interval):
@@ -258,6 +309,7 @@ class ScanDaemon(BaseDaemon):
             'last_scan_time': self.scan_progress['last_scan_time'].isoformat() if self.scan_progress['last_scan_time'] else None,
             'files_scanned': self.scan_progress['files_scanned'],
             'tasks_added': self.scan_progress['tasks_added'],
+            'sources_cleaned': self.scan_progress['sources_cleaned'],
             'error_count': len(self.scan_progress['errors']),
             'uptime': _get_process_uptime(os.getpid()),
         }
@@ -278,6 +330,7 @@ class ScanDaemon(BaseDaemon):
             'last_scan_time': self.scan_progress['last_scan_time'].isoformat() if self.scan_progress['last_scan_time'] else None,
             'files_scanned': self.scan_progress['files_scanned'],
             'tasks_added': self.scan_progress['tasks_added'],
+            'sources_cleaned': self.scan_progress['sources_cleaned'],
             'error_count': len(self.scan_progress['errors']),
             'errors': self.scan_progress['errors'][:10],  # 只保留最近10個錯誤
             'last_update': datetime.now().isoformat()

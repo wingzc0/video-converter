@@ -412,6 +412,51 @@ class TaskRepository:
             self._logger.error(f"Error cleaning up orphaned flags: {str(e)}")
             return 0
 
+    def get_tasks_for_source_cleanup(self, input_dir_prefix: str):
+        """回傳 input_path 位於 input_dir_prefix 下、且非 processing 狀態的所有任務。
+
+        用於 source 刪除清理：processing 任務由 process_daemon 自行處理（
+        ffmpeg 失敗後會由 stale 清理機制介入），不在此清理範圍內。
+
+        Args:
+            input_dir_prefix: 輸入目錄絕對路徑字串（含結尾 /）。
+
+        Returns:
+            list of dict with keys: id, input_path, output_path, status
+        """
+        try:
+            prefix = input_dir_prefix.rstrip('/') + '/'
+            return db_manager.execute_query(
+                """SELECT id, input_path, output_path, status
+                   FROM conversion_tasks
+                   WHERE status != 'processing'
+                   AND input_path LIKE %s
+                   ORDER BY id ASC""",
+                (prefix + '%',), fetch=True
+            )
+        except Exception as e:
+            self._logger.error(f"Error querying tasks for source cleanup: {str(e)}")
+            return []
+
+    def delete_task(self, task_id: int) -> bool:
+        """永久刪除任務記錄及其 processing_lock（若有）。
+
+        Args:
+            task_id: 要刪除的任務 ID。
+
+        Returns:
+            True 表示成功刪除，False 表示失敗。
+        """
+        try:
+            db_manager.execute_transaction([
+                ("DELETE FROM processing_lock WHERE task_id = %s", (task_id,)),
+                ("DELETE FROM conversion_tasks WHERE id = %s", (task_id,)),
+            ])
+            return True
+        except Exception as e:
+            self._logger.error(f"Error deleting task {task_id}: {str(e)}")
+            return False
+
 
 _ACTIVE_STATUSES = ('pending', 'processing')
 
