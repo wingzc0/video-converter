@@ -99,6 +99,7 @@ class ScanDaemon(BaseDaemon):
         self.scan_progress['last_scan_time'] = datetime.now()
         self.scan_progress['files_scanned'] = 0
         self.scan_progress['tasks_added'] = 0
+        self.scan_progress['sources_cleaned'] = 0
         self.scan_progress['errors'] = []
         
         self.logger.info("Starting directory scan...")
@@ -289,7 +290,7 @@ class ScanDaemon(BaseDaemon):
         while self.is_running:
             try:
                 self.scan_directory()
-                self.scan_progress['sources_cleaned'] += self.cleanup_deleted_sources()
+                self.scan_progress['sources_cleaned'] = self.cleanup_deleted_sources()
                 
                 # 等待下次掃描
                 for _ in range(self.scan_interval):

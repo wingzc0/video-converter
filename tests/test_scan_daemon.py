@@ -349,7 +349,7 @@ class TestCleanupDeletedSources(unittest.TestCase):
             'output_path': str(output_file),
             'status': 'completed',
         }]
-        mock_db.execute_transaction.return_value = [1, 1]
+        mock_db.execute_transaction.return_value = [1]
 
         daemon = self._make_daemon()
         deleted = daemon.cleanup_deleted_sources()
@@ -367,7 +367,7 @@ class TestCleanupDeletedSources(unittest.TestCase):
             'output_path': '',
             'status': 'pending',
         }]
-        mock_db.execute_transaction.return_value = [1, 1]
+        mock_db.execute_transaction.return_value = [1]
 
         daemon = self._make_daemon()
         deleted = daemon.cleanup_deleted_sources()
@@ -439,9 +439,9 @@ class TestCleanupDeletedSources(unittest.TestCase):
             'output_path': '',
             'status': 'pending',
         }]
-        # execute_transaction 回傳 rowcounts：processing_lock DELETE=0, tasks DELETE=0
+        # execute_transaction 回傳 rowcounts：tasks DELETE=0
         # 代表 DELETE WHERE status != 'processing' 沒有命中（任務已被搶走）
-        mock_db.execute_transaction.return_value = [0, 0]
+        mock_db.execute_transaction.return_value = [0]
 
         daemon = self._make_daemon()
         deleted = daemon.cleanup_deleted_sources()

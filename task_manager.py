@@ -447,11 +447,15 @@ class TaskRepository:
             return []
 
     def delete_task(self, task_id: int) -> bool:
-        """永久刪除任務記錄及其 processing_lock（若有）。
+        """永久刪除任務記錄（processing_lock 由 FK CASCADE 自動清除）。
 
         僅刪除非 processing 狀態的任務：在 get_tasks_for_source_cleanup() 查詢
         完成後到此方法執行之間，process_daemon 可能已搶先取得 lock 並將任務轉為
         processing。加上 AND status != 'processing' 守衛可防止刪除正在轉檔的任務。
+
+        不顯式刪除 processing_lock：若在 race 視窗內任務已變為 processing，
+        先刪 lock 後 DELETE conversion_tasks 是 no-op，反而留下無 lock row 的孤兒任務；
+        使用 ON DELETE CASCADE 確保 lock 只在 task 本身被成功刪除時才一併清除。
 
         Args:
             task_id: 要刪除的任務 ID。
@@ -461,13 +465,12 @@ class TaskRepository:
         """
         try:
             rowcounts = db_manager.execute_transaction([
-                ("DELETE FROM processing_lock WHERE task_id = %s", (task_id,)),
                 ("DELETE FROM conversion_tasks WHERE id = %s AND status != 'processing'",
                  (task_id,)),
             ])
-            # rowcounts[1] 為 conversion_tasks DELETE 影響的列數；
+            # rowcounts[0] 為 conversion_tasks DELETE 影響的列數；
             # 0 表示任務已被 process_daemon 轉為 processing，不應刪除
-            return bool(rowcounts[1])
+            return bool(rowcounts[0])
         except Exception as e:
             self._logger.error(f"Error deleting task {task_id}: {str(e)}")
             return False
