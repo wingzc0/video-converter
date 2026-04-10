@@ -478,8 +478,8 @@ class TestGetTasksForSourceCleanupEscape(unittest.TestCase):
 
         call_args = mock_db.execute_query.call_args
         pattern = call_args[0][1][0]   # positional args: (sql, params) → params[0]
-        # escape 後底線應變為 \_，不是原始的 _
-        self.assertIn('\\_', pattern)
+        # escape 後底線應變為 !_，不是原始的 _
+        self.assertIn('!_', pattern)
         self.assertNotIn('input_dir/%', pattern)  # 原始未 escape 的模式不應出現
 
 

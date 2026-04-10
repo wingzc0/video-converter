@@ -425,19 +425,20 @@ class TaskRepository:
             list of dict with keys: id, input_path, output_path, status
         """
         try:
-            # 在 LIKE 模式中 escape \、%、_ 三個特殊字元，避免目錄名稱含底線
-            # （如 /mnt/nas_input/）誤匹配其他路徑
+            # 在 LIKE 模式中 escape !、%、_ 三個特殊字元，避免目錄名稱含底線
+            # （如 /mnt/nas_input/）誤匹配其他路徑。
+            # 使用 ! 作為 ESCAPE 字元，避免 backslash 在 MariaDB 字串中的歧義。
             safe = (
                 input_dir_prefix.rstrip('/')
-                .replace('\\', '\\\\')
-                .replace('%', '\\%')
-                .replace('_', '\\_')
+                .replace('!', '!!')
+                .replace('%', '!%')
+                .replace('_', '!_')
             ) + '/'
             return db_manager.execute_query(
                 """SELECT id, input_path, output_path, status
                    FROM conversion_tasks
                    WHERE status != 'processing'
-                   AND input_path LIKE %s ESCAPE '\\'
+                   AND input_path LIKE %s ESCAPE '!'
                    ORDER BY id ASC""",
                 (safe + '%',), fetch=True
             )
