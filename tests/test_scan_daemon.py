@@ -430,6 +430,58 @@ class TestCleanupDeletedSources(unittest.TestCase):
         self.assertEqual(deleted, 0)                       # 沒有刪除任何 task
         mock_db.execute_transaction.assert_not_called()    # delete_task 未呼叫
 
+    @patch('task_manager.db_manager')
+    def test_task_claimed_by_process_daemon_not_counted(self, mock_db):
+        """delete_task 回傳 False 時（任務已被 process_daemon 搶走），不計入 deleted"""
+        mock_db.execute_query.return_value = [{
+            'id': 5,
+            'input_path': str(self.input_dir / 'video.mp4'),
+            'output_path': '',
+            'status': 'pending',
+        }]
+        # execute_transaction 回傳 rowcounts：processing_lock DELETE=0, tasks DELETE=0
+        # 代表 DELETE WHERE status != 'processing' 沒有命中（任務已被搶走）
+        mock_db.execute_transaction.return_value = [0, 0]
+
+        daemon = self._make_daemon()
+        deleted = daemon.cleanup_deleted_sources()
+
+        self.assertEqual(deleted, 0)  # 不計入 deleted，因為 delete_task 回傳 False
+
+
+class TestGetTasksForSourceCleanupEscape(unittest.TestCase):
+    """get_tasks_for_source_cleanup() — LIKE 模式 escape 驗證"""
+
+    def setUp(self):
+        import tempfile
+        self.tmp = Path(tempfile.mkdtemp())
+        (self.tmp / 'input_dir').mkdir()
+        (self.tmp / 'output').mkdir()
+
+    def _make_daemon(self, input_dir):
+        with patch.dict('os.environ', {
+            'INPUT_DIRECTORY': str(input_dir),
+            'OUTPUT_DIRECTORY': str(self.tmp / 'output'),
+            'IGNORE_DIRECTORIES': '',
+        }):
+            from daemons.scan_daemon import ScanDaemon
+            return ScanDaemon(scan_interval=60)
+
+    @patch('task_manager.db_manager')
+    def test_underscore_in_path_is_escaped(self, mock_db):
+        """目錄名稱含 _ 時，LIKE 模式中的 _ 應被 escape，不當作萬用字元"""
+        mock_db.execute_query.return_value = []
+        input_dir = self.tmp / 'input_dir'
+
+        daemon = self._make_daemon(input_dir)
+        daemon.task_repo.get_tasks_for_source_cleanup(str(input_dir))
+
+        call_args = mock_db.execute_query.call_args
+        pattern = call_args[0][1][0]   # positional args: (sql, params) → params[0]
+        # escape 後底線應變為 \_，不是原始的 _
+        self.assertIn('\\_', pattern)
+        self.assertNotIn('input_dir/%', pattern)  # 原始未 escape 的模式不應出現
+
 
 if __name__ == '__main__':
     unittest.main()

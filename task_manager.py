@@ -419,20 +419,27 @@ class TaskRepository:
         ffmpeg 失敗後會由 stale 清理機制介入），不在此清理範圍內。
 
         Args:
-            input_dir_prefix: 輸入目錄絕對路徑字串（含結尾 /）。
+            input_dir_prefix: 輸入目錄絕對路徑字串（不含結尾 /）。
 
         Returns:
             list of dict with keys: id, input_path, output_path, status
         """
         try:
-            prefix = input_dir_prefix.rstrip('/') + '/'
+            # 在 LIKE 模式中 escape \、%、_ 三個特殊字元，避免目錄名稱含底線
+            # （如 /mnt/nas_input/）誤匹配其他路徑
+            safe = (
+                input_dir_prefix.rstrip('/')
+                .replace('\\', '\\\\')
+                .replace('%', '\\%')
+                .replace('_', '\\_')
+            ) + '/'
             return db_manager.execute_query(
                 """SELECT id, input_path, output_path, status
                    FROM conversion_tasks
                    WHERE status != 'processing'
-                   AND input_path LIKE %s
+                   AND input_path LIKE %s ESCAPE '\\'
                    ORDER BY id ASC""",
-                (prefix + '%',), fetch=True
+                (safe + '%',), fetch=True
             )
         except Exception as e:
             self._logger.error(f"Error querying tasks for source cleanup: {str(e)}")
@@ -441,18 +448,25 @@ class TaskRepository:
     def delete_task(self, task_id: int) -> bool:
         """永久刪除任務記錄及其 processing_lock（若有）。
 
+        僅刪除非 processing 狀態的任務：在 get_tasks_for_source_cleanup() 查詢
+        完成後到此方法執行之間，process_daemon 可能已搶先取得 lock 並將任務轉為
+        processing。加上 AND status != 'processing' 守衛可防止刪除正在轉檔的任務。
+
         Args:
             task_id: 要刪除的任務 ID。
 
         Returns:
-            True 表示成功刪除，False 表示失敗。
+            True 表示成功刪除，False 表示任務已被 process_daemon 接管或發生錯誤。
         """
         try:
-            db_manager.execute_transaction([
+            rowcounts = db_manager.execute_transaction([
                 ("DELETE FROM processing_lock WHERE task_id = %s", (task_id,)),
-                ("DELETE FROM conversion_tasks WHERE id = %s", (task_id,)),
+                ("DELETE FROM conversion_tasks WHERE id = %s AND status != 'processing'",
+                 (task_id,)),
             ])
-            return True
+            # rowcounts[1] 為 conversion_tasks DELETE 影響的列數；
+            # 0 表示任務已被 process_daemon 轉為 processing，不應刪除
+            return bool(rowcounts[1])
         except Exception as e:
             self._logger.error(f"Error deleting task {task_id}: {str(e)}")
             return False
