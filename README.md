@@ -89,7 +89,7 @@ video-converter/
 │   │                          #   所有 DB 操作透過 TaskRepository（task_manager.py）
 │   │
 │   └── process_daemon.py      # 處理 Daemon（繼承 BaseDaemon）
-│                              #   執行緒池工作模式（預設：1 個工作執行緒，使用 queue.Queue）
+│                              #   執行緒池工作模式（預設：2 個工作執行緒，使用 queue.Queue）
 │                              #   每 CHECK_INTERVAL 秒輪詢一次資料庫的待處理任務（預設：60 秒）
 │                              #   任務排序：retry_count ASC, created_at ASC（全新任務優先）
 │                              #   使用資料庫列鎖（is_processing 旗標）防止重複處理
@@ -220,7 +220,7 @@ python3 init_db.py          # 自動建立 ./data/converter.db 及所有資料�
 | `SUPPORTED_EXTENSIONS` | 支援的副檔名（預設：`.mp4,.mkv,.avi,.mov,.flv,.wmv,.m4v,.webm`） |
 | `MIN_RESOLUTION` | 最低解析度（預設：`481`，即跳過 ≤ 480p 的檔案） |
 | `IGNORE_DIRECTORIES` | 掃描時略過的目錄，逗號分隔。支援兩種格式：<br>• **絕對路徑**（`/mnt/nas/archive`）：精確前綴比對，只忽略該路徑本身及其子目錄<br>• **相對路徑**（`@Recycle`、`temp/cache`）：比對路徑中連續的目錄名稱序列，忽略掃描樹任意位置的同名目錄（單層或多層皆支援） |
-| `IGNORE_OUTPUT_DIR` | 設為 `true` 時自動忽略 `OUTPUT_DIRECTORY`，無需在 `IGNORE_DIRECTORIES` 重複列出（預設：`true`） |
+| `IGNORE_OUTPUT_DIR` | 設為 `true` 時自動忽略 `OUTPUT_DIRECTORY`，無需在 `IGNORE_DIRECTORIES` 重複列出（預設：`false`；`.env.sample` 預設為 `true`） |
 | `MAX_WORKERS` | 最大工作執行緒數 |
 | `SCAN_INTERVAL` | 掃描間隔（秒，預設 300；NFS 環境建議 1800） |
 | `CHECK_INTERVAL` | 任務輪詢間隔（秒） |
@@ -473,8 +473,8 @@ journalctl -u video-api       -f
 
 | 服務 | 對應腳本 | 說明 |
 |---|---|---|
-| `video-scanner` | `start_scan_daemon.py` | 定期掃描目錄，發現新影片加入 DB |
-| `video-processor` | `start_process_daemon.py` | 從 DB 取出 pending 任務，呼叫 ffmpeg 轉檔 |
+| `video-scanner` | `daemon_ctl.py scan start` | 定期掃描目錄，發現新影片加入 DB |
+| `video-processor` | `daemon_ctl.py process start` | 從 DB 取出 pending 任務，呼叫 ffmpeg 轉檔 |
 | `video-api` | `daemon_ctl.py api` | REST API + WebSocket 即時狀態推送 |
 
 > **注意**：`EnvironmentFile` 指向 `{{INSTALL_DIR}}/.env`，請確認 `.env` 已正確設定後再啟動服務。

@@ -390,7 +390,7 @@ def cmd_add_file(file_paths, dry_run=False):
     output_dir = Path(os.getenv('OUTPUT_DIRECTORY', '')).resolve()
     supported  = set(e.strip().lower() for e in
                      os.getenv('SUPPORTED_EXTENSIONS',
-                               '.mp4,.mkv,.avi,.mov,.mts,.mxf,.mpg').split(','))
+                               '.mp4,.mkv,.avi,.mov,.flv,.wmv,.m4v,.webm').split(','))
 
     task_repo = TaskRepository()
     added = 0
