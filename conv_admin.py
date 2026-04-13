@@ -162,7 +162,9 @@ def cmd_stats(failed_limit=5):
         _pid = int(_pid_file.read_text().strip())
         os.kill(_pid, 0)          # 只確認程序存活，不發送信號
         _daemon_running = True
-    except (FileNotFoundError, ValueError, ProcessLookupError, PermissionError):
+    except PermissionError:
+        _daemon_running = True   # process 存在但由其他用戶擁有
+    except (FileNotFoundError, ValueError, ProcessLookupError):
         pass
     if _daemon_running and _status_file.exists():
         try:

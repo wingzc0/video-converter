@@ -392,7 +392,7 @@ class ProcessDaemon(BaseDaemon):
             self.cleanup_stale_tasks()
 
             # 每 retry_interval_cycles 次才執行一次重試
-            if self._check_cycle % self.retry_interval_cycles == 1:
+            if self._check_cycle % self.retry_interval_cycles == 0:
                 self.retry_failed_tasks()
 
             pending_tasks = self.get_pending_tasks()
