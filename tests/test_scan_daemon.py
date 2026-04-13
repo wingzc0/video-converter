@@ -506,6 +506,37 @@ class TestGetTasksForSourceCleanupEscape(unittest.TestCase):
         self.assertIn('!_', pattern)
         self.assertNotIn('input_dir/%', pattern)  # 原始未 escape 的模式不應出現
 
+    @patch('task_manager.db_manager')
+    def test_percent_in_path_is_escaped(self, mock_db):
+        """目錄名稱含 % 時，LIKE 模式中的 % 應被 escape，不當作萬用字元"""
+        mock_db.execute_query.return_value = []
+        # 建立含 % 的目錄（部分 OS/FS 允許，但 LIKE 會把它當萬用字元）
+        input_dir = self.tmp / 'nas%data'
+        input_dir.mkdir(exist_ok=True)
+
+        daemon = self._make_daemon(input_dir)
+        daemon.task_repo.get_tasks_for_source_cleanup(str(input_dir))
+
+        call_args = mock_db.execute_query.call_args
+        pattern = call_args[0][1][0]
+        self.assertIn('!%', pattern)          # % 已被 escape
+        self.assertNotIn('nas%data/%', pattern)  # 裸 % 不應出現在 prefix 中
+
+    @patch('task_manager.db_manager')
+    def test_exclamation_in_path_is_escaped(self, mock_db):
+        """目錄名稱含 ! 時，LIKE 模式中的 ! 應先被 escape 為 !!，避免雙重 escape"""
+        mock_db.execute_query.return_value = []
+        input_dir = self.tmp / 'input!data'
+        input_dir.mkdir(exist_ok=True)
+
+        daemon = self._make_daemon(input_dir)
+        daemon.task_repo.get_tasks_for_source_cleanup(str(input_dir))
+
+        call_args = mock_db.execute_query.call_args
+        pattern = call_args[0][1][0]
+        self.assertIn('!!', pattern)          # ! 本身已被 escape 為 !!
+        self.assertNotIn('input!data/', pattern)  # 原始未 escape 的 ! 不應出現
+
 
 if __name__ == '__main__':
     unittest.main()
