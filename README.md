@@ -97,7 +97,8 @@ video-converter/
 │                              #   呼叫 converter.convert_to_480p() 並即時回報進度
 │                              #   ffmpeg 雙層超時保護：stall timeout（無進度）+ absolute timeout
 │                              #     absolute timeout：FFMPEG_TIMEOUT=0（預設）時動態計算
-│                              #       = max(FFMPEG_TIMEOUT_MIN, 影片時長 × FFMPEG_TIMEOUT_MULTIPLIER)
+│                              #       = max(FFMPEG_TIMEOUT_MIN, 影片時長 × FFMPEG_TIMEOUT_MULTIPLIER × bitrate_factor)
+│                              #       bitrate_factor = log2(max(2, src_Mbps / BITRATE_BASELINE_MBPS))（高 bitrate 自動延長）
 │                              #   轉檔完成後驗證輸出時長（abs 差值 > DURATION_THRESHOLD → failed）
 │                              #   status='completed'/'failed' 時原子性清除 is_processing 旗標
 │                              #   retry_count 在 update_task_status(failed) 時遞增（非重新排入時）
@@ -157,7 +158,8 @@ video-converter/
 [ converter.py ] ──── ffmpeg ────► OUTPUT_DIRECTORY/480p_<stem>.mp4（mp4 輸入）
                                               或 480p_<stem>_<ext>.mp4（其他格式）
       │  watchdog thread：stall timeout（無進度 FFMPEG_STALL_TIMEOUT 秒）
-      │             ：absolute timeout（動態 = 時長 × FFMPEG_TIMEOUT_MULTIPLIER，或固定 FFMPEG_TIMEOUT 秒）
+      │             ：absolute timeout（動態 = 時長 × FFMPEG_TIMEOUT_MULTIPLIER × bitrate_factor，或固定 FFMPEG_TIMEOUT 秒）
+      │               bitrate_factor = log2(max(2, src_Mbps / BITRATE_BASELINE_MBPS))；高 bitrate 來源（如 8K RAW）自動延長
       │  失敗時回傳 ffmpeg stderr 最後幾行供診斷
       │
       ├─► ffprobe 驗證輸出時長（abs 差 > DURATION_THRESHOLD → failed + retry）
@@ -228,9 +230,10 @@ python3 init_db.py          # 自動建立 ./data/converter.db 及所有資料�
 | `RETRY_INTERVAL_CYCLES` | 每幾個 check cycle 執行一次重試（預設：`10`） |
 | `STALE_HOURS` | 任務卡在 processing 超過幾小時視為過時（預設：`1`，NFS 長時轉檔建議 `4` 以上） |
 | `DURATION_THRESHOLD` | 輸出檔長度驗證閾值（秒）：輸出與來源時長差超過此值（abs）則視為不完整並重新加入佇列；設 `0` 停用驗證（預設：`2.0`） |
-| `FFMPEG_TIMEOUT` | ffmpeg 整體轉檔絕對上限（秒）；`0`（預設）= 動態模式（依 `FFMPEG_TIMEOUT_MULTIPLIER × 影片時長`自動計算）；`> 0` = 固定秒數 |
-| `FFMPEG_TIMEOUT_MULTIPLIER` | 動態 timeout 倍數（`FFMPEG_TIMEOUT=0` 時生效）；`timeout = max(FFMPEG_TIMEOUT_MIN, 時長 × 此值)`（預設：`2.0`） |
+| `FFMPEG_TIMEOUT` | ffmpeg 整體轉檔絕對上限（秒）；`0`（預設）= 動態模式（依 `FFMPEG_TIMEOUT_MULTIPLIER × 影片時長 × bitrate_factor` 自動計算）；`> 0` = 固定秒數 |
+| `FFMPEG_TIMEOUT_MULTIPLIER` | 動態 timeout 倍數（`FFMPEG_TIMEOUT=0` 時生效）；`timeout = max(FFMPEG_TIMEOUT_MIN, 時長 × 此值 × bitrate_factor)`（預設：`2.0`） |
 | `FFMPEG_TIMEOUT_MIN` | 動態 timeout 最低保障秒數，避免極短影片 timeout 過短（預設：`300`） |
+| `BITRATE_BASELINE_MBPS` | 動態 timeout 的 bitrate 修正基準（Mbps）；`bitrate_factor = log2(max(2, src_Mbps / 此值))`，高 bitrate 來源（如 8K 540 Mbps）自動延長 timeout；`0` 停用修正（預設：`10`） |
 | `FFMPEG_STALL_TIMEOUT` | ffmpeg 無進度輸出超時（秒）；適用於 NFS I/O stall 導致 ffmpeg 停住但不退出的情況；設 `0` 停用（預設：`300`，即 5 分鐘） |
 | `ENABLE_TIME_RESTRICTION` | 設為 `true` 時啟用轉檔時間限制，僅在指定時段內允許轉檔（預設：`false`） |
 | `ALLOWED_START_TIME` | 允許轉檔的開始時間，`HH:MM` 格式（預設：`22:00`） |

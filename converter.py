@@ -65,20 +65,26 @@ def compute_output_name(file_path):
 def convert_to_480p(input_path, output_path, progress_callback=None,
                     ffmpeg_timeout=None, ffmpeg_stall_timeout=None,
                     timeout_multiplier=0.0, min_timeout=300,
+                    bitrate_baseline_mbps=0,
                     _diag=None):
     """使用 ffmpeg 將影片轉換為 480p H.264/AAC，支援進度回調與超時保護。
 
     Args:
-        input_path:          輸入影片路徑（字串）。
-        output_path:         輸出 .mp4 路徑（字串）；已存在時以 -y 覆蓋。
-        progress_callback:   可選回調 `f(progress: float)`，progress 範圍 0–99.9；
-                             100% 由 process_task 在確認輸出檔存在後才設定。
-        ffmpeg_timeout:      整體轉檔絕對上限（秒）。None 時若 timeout_multiplier > 0
-                             則自動依影片時長計算；0 表示不限制。
+        input_path:           輸入影片路徑（字串）。
+        output_path:          輸出 .mp4 路徑（字串）；已存在時以 -y 覆蓋。
+        progress_callback:    可選回調 `f(progress: float)`，progress 範圍 0–99.9；
+                              100% 由 process_task 在確認輸出檔存在後才設定。
+        ffmpeg_timeout:       整體轉檔絕對上限（秒）。None 時若 timeout_multiplier > 0
+                              則自動依影片時長計算；0 表示不限制。
         ffmpeg_stall_timeout: 多久未收到 ffmpeg 進度輸出即視為停頓（秒）。None 表示不限制。
-        timeout_multiplier:  動態 timeout 倍數（僅在 ffmpeg_timeout 為 None 時生效）。
-                             0 表示停用動態計算。
-        min_timeout:         動態計算的最低保障秒數（預設 300s）。
+        timeout_multiplier:   動態 timeout 倍數（僅在 ffmpeg_timeout 為 None 時生效）。
+                              0 表示停用動態計算。
+        min_timeout:          動態計算的最低保障秒數（預設 300s）。
+        bitrate_baseline_mbps: bitrate 修正基準（Mbps）。> 0 時依來源 bitrate 以 log2
+                              scale 拉長 timeout，補償高 bitrate（如 8K RAW）轉檔耗時。
+                              0 表示停用修正。公式：
+                              factor = log2(max(2, src_mbps / baseline))
+                              timeout = max(min_timeout, duration × multiplier × factor)
 
     Returns:
         tuple[bool, str|None]: 成功時 (True, None)；失敗時 (False, 錯誤原因字串)。
@@ -109,13 +115,20 @@ def convert_to_480p(input_path, output_path, progress_callback=None,
     ]
     
     try:
-        # 獲取影片總時長
-        duration = get_video_duration(input_path)
+        # 一次 ffprobe 同時取得時長與 bitrate（動態 timeout 與進度計算皆需要）
+        duration, src_bitrate = get_video_duration_and_bitrate(input_path)
 
         # 動態 timeout：若未指定固定 ffmpeg_timeout 且設有 timeout_multiplier，
-        # 依影片時長計算：max(min_timeout, duration * timeout_multiplier)
+        # 依影片時長計算，並可選擇性加入 bitrate 修正因子：
+        #   factor = log2(max(2, src_mbps / bitrate_baseline_mbps))
+        #   timeout = max(min_timeout, duration × multiplier × factor)
         if ffmpeg_timeout is None and timeout_multiplier > 0 and duration > 0:
-            ffmpeg_timeout = max(float(min_timeout), duration * timeout_multiplier)
+            import math
+            bitrate_factor = 1.0
+            if bitrate_baseline_mbps > 0 and src_bitrate > 0:
+                src_mbps = src_bitrate / 1_000_000
+                bitrate_factor = math.log2(max(2.0, src_mbps / bitrate_baseline_mbps))
+            ffmpeg_timeout = max(float(min_timeout), duration * timeout_multiplier * bitrate_factor)
         
         # 執行轉換並實時追蹤進度
         # 使用 binary 模式讀取 stderr，避免非 UTF-8 字元（如部分影片 metadata）造成 UnicodeDecodeError
@@ -256,20 +269,32 @@ def convert_to_480p(input_path, output_path, progress_callback=None,
 
 def get_video_duration(input_path):
     """獲取影片總時長（秒）"""
+    duration, _ = get_video_duration_and_bitrate(input_path)
+    return duration
+
+
+def get_video_duration_and_bitrate(input_path):
+    """獲取影片總時長（秒）與整體 bitrate（bps）。
+
+    Returns:
+        tuple[float, int]: (duration_secs, bitrate_bps)；失敗時回傳 (0, 0)。
+    """
     cmd = [
         'ffprobe',
         '-v', 'quiet',
-        '-show_entries', 'format=duration',
-        '-of', 'default=noprint_wrappers=1:nokey=1',
+        '-show_entries', 'format=duration,bit_rate',
+        '-of', 'json',
         input_path
     ]
-    
     try:
         result = subprocess.run(cmd, capture_output=True, text=True, check=True)
-        return float(result.stdout.strip())
+        fmt = json.loads(result.stdout).get('format', {})
+        duration = float(fmt.get('duration') or 0)
+        bit_rate = int(fmt.get('bit_rate') or 0)
+        return duration, bit_rate
     except Exception as e:
-        print(f"Error getting video duration: {e}")
-        return 0
+        print(f"Error getting video duration and bitrate: {e}")
+        return 0, 0
 
 def parse_time_to_seconds(time_str):
     """將時間字串轉換為秒數 (HH:MM:SS.mmm)"""

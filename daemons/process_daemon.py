@@ -138,9 +138,11 @@ class ProcessDaemon(BaseDaemon):
         self.ffmpeg_stall_timeout = _fst if _fst > 0 else None
 
         # 動態 timeout 參數（僅在 FFMPEG_TIMEOUT=0 時生效）
-        # timeout = max(FFMPEG_TIMEOUT_MIN, video_duration * FFMPEG_TIMEOUT_MULTIPLIER)
+        # timeout = max(FFMPEG_TIMEOUT_MIN, video_duration * FFMPEG_TIMEOUT_MULTIPLIER * bitrate_factor)
+        # bitrate_factor = log2(max(2, src_mbps / BITRATE_BASELINE_MBPS))（0 表示停用 bitrate 修正）
         self.timeout_multiplier = float(os.getenv('FFMPEG_TIMEOUT_MULTIPLIER', '2.0'))
         self.min_timeout = int(os.getenv('FFMPEG_TIMEOUT_MIN', '300'))
+        self.bitrate_baseline_mbps = float(os.getenv('BITRATE_BASELINE_MBPS', '10'))
 
         # 時間限制設定
         self.enable_time_restriction = os.getenv('ENABLE_TIME_RESTRICTION', 'false').strip().lower() == 'true'
@@ -157,7 +159,7 @@ class ProcessDaemon(BaseDaemon):
         self.logger.info(f"Check interval: {self.check_interval} seconds")
         self.logger.info(f"Max retries: {self.max_retries}, retry every {self.retry_interval_cycles} cycles, stale after {self.stale_hours}h")
         self.logger.info(
-            f"ffmpeg timeout: {self.ffmpeg_timeout or f'dynamic ({self.timeout_multiplier}x, min {self.min_timeout}s)'}s, "
+            f"ffmpeg timeout: {self.ffmpeg_timeout or f'dynamic ({self.timeout_multiplier}x, min {self.min_timeout}s, bitrate baseline {self.bitrate_baseline_mbps}Mbps)'}s, "
             f"stall timeout: {self.ffmpeg_stall_timeout or 'disabled'}s"
         )
         if self.enable_time_restriction:
@@ -236,6 +238,7 @@ class ProcessDaemon(BaseDaemon):
                 ffmpeg_stall_timeout=self.ffmpeg_stall_timeout,
                 timeout_multiplier=self.timeout_multiplier,
                 min_timeout=self.min_timeout,
+                bitrate_baseline_mbps=self.bitrate_baseline_mbps,
                 _diag=_diag,
             )
             

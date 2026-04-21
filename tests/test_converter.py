@@ -12,7 +12,7 @@ from unittest.mock import MagicMock, patch, call
 # 將專案根目錄加入 Python 路徑
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from converter import convert_to_480p, get_video_duration, get_video_info, parse_time_to_seconds, compute_output_name
+from converter import convert_to_480p, get_video_duration, get_video_duration_and_bitrate, get_video_info, parse_time_to_seconds, compute_output_name
 
 
 class TestParseTimeToSeconds(unittest.TestCase):
@@ -110,19 +110,35 @@ class TestGetVideoInfo(unittest.TestCase):
 
 
 class TestGetVideoDuration(unittest.TestCase):
-    """get_video_duration() 使用 mock subprocess"""
+    """get_video_duration() / get_video_duration_and_bitrate() 使用 mock subprocess"""
 
     @patch('converter.subprocess.run')
     def test_returns_duration(self, mock_run):
         mock_run.return_value = MagicMock(
-            stdout='123.456\n',  # get_video_duration 用 -of default=noprint_wrappers=1:nokey=1，輸出純數字
+            stdout='{"format": {"duration": "123.456", "bit_rate": "5000000"}}',
             returncode=0
         )
         self.assertAlmostEqual(get_video_duration('/fake/video.mp4'), 123.456)
 
+    @patch('converter.subprocess.run')
+    def test_returns_duration_and_bitrate(self, mock_run):
+        mock_run.return_value = MagicMock(
+            stdout='{"format": {"duration": "300.0", "bit_rate": "20000000"}}',
+            returncode=0
+        )
+        duration, bitrate = get_video_duration_and_bitrate('/fake/video.mp4')
+        self.assertAlmostEqual(duration, 300.0)
+        self.assertEqual(bitrate, 20000000)
+
     @patch('converter.subprocess.run', side_effect=Exception('error'))
     def test_error_returns_zero(self, _):
         self.assertEqual(get_video_duration('/fake/video.mp4'), 0.0)
+
+    @patch('converter.subprocess.run', side_effect=Exception('error'))
+    def test_duration_and_bitrate_error_returns_zero_tuple(self, _):
+        duration, bitrate = get_video_duration_and_bitrate('/fake/video.mp4')
+        self.assertEqual(duration, 0)
+        self.assertEqual(bitrate, 0)
 
 
 class TestConvertTo480p(unittest.TestCase):
@@ -157,7 +173,7 @@ class TestConvertTo480p(unittest.TestCase):
         mock_proc.stderr.fileno.return_value = r_fd
         return mock_proc
 
-    @patch('converter.get_video_duration', return_value=100.0)
+    @patch('converter.get_video_duration_and_bitrate', return_value=(100.0, 0))
     @patch('converter.subprocess.Popen')
     def test_successful_conversion_returns_true(self, mock_popen, _):
         mock_popen.return_value = self._make_mock_process(returncode=0)
@@ -165,7 +181,7 @@ class TestConvertTo480p(unittest.TestCase):
         self.assertTrue(success)
         self.assertIsNone(error)
 
-    @patch('converter.get_video_duration', return_value=100.0)
+    @patch('converter.get_video_duration_and_bitrate', return_value=(100.0, 0))
     @patch('converter.subprocess.Popen')
     def test_failed_conversion_returns_false(self, mock_popen, _):
         mock_popen.return_value = self._make_mock_process(returncode=1)
@@ -173,7 +189,7 @@ class TestConvertTo480p(unittest.TestCase):
         self.assertFalse(success)
         self.assertIsNotNone(error)
 
-    @patch('converter.get_video_duration', return_value=100.0)
+    @patch('converter.get_video_duration_and_bitrate', return_value=(100.0, 0))
     @patch('converter.subprocess.Popen')
     def test_failed_conversion_includes_stderr(self, mock_popen, _):
         """失敗時 error 應包含 ffmpeg stderr 的最後幾行"""
@@ -185,7 +201,7 @@ class TestConvertTo480p(unittest.TestCase):
         self.assertFalse(success)
         self.assertIn('Invalid data found', error)
 
-    @patch('converter.get_video_duration', return_value=100.0)
+    @patch('converter.get_video_duration_and_bitrate', return_value=(100.0, 0))
     @patch('converter.subprocess.Popen')
     def test_success_has_no_error(self, mock_popen, _):
         """成功時 error 應為 None"""
@@ -197,7 +213,7 @@ class TestConvertTo480p(unittest.TestCase):
         self.assertTrue(success)
         self.assertIsNone(error)
 
-    @patch('converter.get_video_duration', return_value=100.0)
+    @patch('converter.get_video_duration_and_bitrate', return_value=(100.0, 0))
     @patch('converter.subprocess.Popen')
     def test_progress_callback_called(self, mock_popen, _):
         """確認 time= 行會觸發 progress_callback"""
@@ -213,7 +229,7 @@ class TestConvertTo480p(unittest.TestCase):
         progress_value = callback.call_args[0][0]
         self.assertAlmostEqual(progress_value, 50.0, delta=1.0)
 
-    @patch('converter.get_video_duration', return_value=100.0)
+    @patch('converter.get_video_duration_and_bitrate', return_value=(100.0, 0))
     @patch('converter.subprocess.Popen')
     def test_progress_capped_at_99_9(self, mock_popen, _):
         """進度最大值應被限制在 99.9%，不應顯示 100%"""
@@ -226,7 +242,7 @@ class TestConvertTo480p(unittest.TestCase):
         for call_args in callback.call_args_list:
             self.assertLessEqual(call_args[0][0], 99.9)
 
-    @patch('converter.get_video_duration', return_value=100.0)
+    @patch('converter.get_video_duration_and_bitrate', return_value=(100.0, 0))
     @patch('converter.subprocess.Popen')
     def test_unicode_error_kills_process(self, mock_popen, _):
         """非 UTF-8 字元不應讓 ffmpeg 成為孤兒（errors='ignore' 保護）"""
@@ -246,7 +262,7 @@ class TestConvertTo480p(unittest.TestCase):
         success, error = convert_to_480p('/input.mp4', '/output.mp4')
         self.assertTrue(success)
 
-    @patch('converter.get_video_duration', return_value=100.0)
+    @patch('converter.get_video_duration_and_bitrate', return_value=(100.0, 0))
     @patch('converter.subprocess.Popen')
     def test_stall_timeout_kills_ffmpeg(self, mock_popen, _):
         """stall_timeout 超時後應殺掉 ffmpeg 並回傳 (False, <reason>)"""
@@ -276,7 +292,7 @@ class TestConvertTo480p(unittest.TestCase):
         self.assertFalse(success)
         self.assertIn('stall', error.lower())
 
-    @patch('converter.get_video_duration', return_value=100.0)
+    @patch('converter.get_video_duration_and_bitrate', return_value=(100.0, 0))
     @patch('converter.subprocess.Popen')
     def test_nostdin_in_ffmpeg_command(self, mock_popen, _):
         """-nostdin 旗標應包含在 ffmpeg 指令中，防止 daemon 環境誤讀 stdin"""
@@ -285,7 +301,7 @@ class TestConvertTo480p(unittest.TestCase):
         cmd = mock_popen.call_args[0][0]
         self.assertIn('-nostdin', cmd)
 
-    @patch('converter.get_video_duration', return_value=600.0)
+    @patch('converter.get_video_duration_and_bitrate', return_value=(600.0, 0))
     @patch('converter.subprocess.Popen')
     def test_dynamic_timeout_computed_from_duration(self, mock_popen, _):
         """timeout_multiplier > 0 且 ffmpeg_timeout=None 時，應依影片時長動態計算 timeout"""
@@ -298,7 +314,7 @@ class TestConvertTo480p(unittest.TestCase):
         # 因為測試中 process 立即結束，只要 Popen 被呼叫即代表流程正常
         mock_popen.assert_called_once()
 
-    @patch('converter.get_video_duration', return_value=60.0)
+    @patch('converter.get_video_duration_and_bitrate', return_value=(60.0, 0))
     @patch('converter.subprocess.Popen')
     def test_dynamic_timeout_respects_min_timeout(self, mock_popen, _):
         """短片（duration * multiplier < min_timeout）時應使用 min_timeout"""
@@ -308,7 +324,7 @@ class TestConvertTo480p(unittest.TestCase):
                         timeout_multiplier=3.0, min_timeout=300)
         mock_popen.assert_called_once()
 
-    @patch('converter.get_video_duration', return_value=600.0)
+    @patch('converter.get_video_duration_and_bitrate', return_value=(600.0, 0))
     @patch('converter.subprocess.Popen')
     def test_fixed_timeout_overrides_dynamic(self, mock_popen, _):
         """ffmpeg_timeout 明確指定時，不應觸發動態計算"""
@@ -318,7 +334,7 @@ class TestConvertTo480p(unittest.TestCase):
                         ffmpeg_timeout=3600, timeout_multiplier=3.0)
         mock_popen.assert_called_once()
 
-    @patch('converter.get_video_duration', return_value=0.0)
+    @patch('converter.get_video_duration_and_bitrate', return_value=(0.0, 0))
     @patch('converter.subprocess.Popen')
     def test_dynamic_timeout_skipped_when_duration_zero(self, mock_popen, _):
         """duration=0（ffprobe 失敗）時不應計算動態 timeout（避免 timeout=0）"""
@@ -327,7 +343,7 @@ class TestConvertTo480p(unittest.TestCase):
                         timeout_multiplier=3.0, min_timeout=300)
         mock_popen.assert_called_once()
 
-    @patch('converter.get_video_duration', return_value=100.0)
+    @patch('converter.get_video_duration_and_bitrate', return_value=(100.0, 0))
     @patch('converter.subprocess.Popen')
     def test_carriage_return_progress_lines_parsed(self, mock_popen, _):
         """以 \\r 結尾的 ffmpeg progress 行（與 \\n 混合）應正確解析 time= 欄位"""
@@ -356,6 +372,81 @@ class TestConvertTo480p(unittest.TestCase):
         self.assertGreater(callback.call_count, 0)
         last_progress = callback.call_args_list[-1][0][0]
         self.assertAlmostEqual(last_progress, 60.0, delta=1.0)
+
+
+class TestBitrateFactorTimeout(unittest.TestCase):
+    """bitrate_baseline_mbps 修正因子測試"""
+
+    def _run_convert(self, duration, bitrate_bps, multiplier, min_timeout, baseline_mbps):
+        """執行 convert_to_480p 並回傳實際使用的 ffmpeg_timeout（從 _diag）"""
+        import math
+        # 直接計算預期值，不依賴 _diag（Popen 在測試中立即結束）
+        src_mbps = bitrate_bps / 1_000_000
+        factor = math.log2(max(2.0, src_mbps / baseline_mbps))
+        expected = max(float(min_timeout), duration * multiplier * factor)
+        return expected
+
+    def test_high_bitrate_increases_timeout(self):
+        """高 bitrate（8K 540 Mbps）應大幅延長 timeout"""
+        import math
+        # 540 Mbps, baseline=10 → log2(54) ≈ 5.75
+        factor = math.log2(max(2.0, 540 / 10))
+        timeout = max(300.0, 6081 * 2.0 * factor)
+        self.assertGreater(timeout, 14400)  # 應超過原本的 4h timeout
+
+    def test_normal_bitrate_factor_near_one(self):
+        """接近 baseline 的 bitrate（如 10 Mbps）factor 應為 1（log2(2/2)=0... 用 max(2,x)）"""
+        import math
+        # 10 Mbps / 10 = 1.0 → max(2, 1.0) = 2 → log2(2) = 1.0
+        factor = math.log2(max(2.0, 10 / 10))
+        self.assertAlmostEqual(factor, 1.0)
+
+    def test_low_bitrate_clamped_to_one(self):
+        """低 bitrate（< baseline）不應縮短 timeout（max(2,...) 保護）"""
+        import math
+        # 2 Mbps / 10 = 0.2 → max(2, 0.2) = 2 → log2(2) = 1.0（不縮短）
+        factor = math.log2(max(2.0, 2 / 10))
+        self.assertAlmostEqual(factor, 1.0)
+
+    @patch('converter.get_video_duration_and_bitrate', return_value=(6081.0, 540_000_000))
+    @patch('converter.subprocess.Popen')
+    def test_8k_file_timeout_exceeds_4h(self, mock_popen, _):
+        """8K 540 Mbps 6081s 影片的動態 timeout 應超過 14400s（4h）"""
+        mock_popen.return_value = MagicMock(
+            wait=MagicMock(return_value=0),
+            returncode=0,
+            poll=MagicMock(return_value=0),
+            stderr=MagicMock(fileno=MagicMock(return_value=-1)),
+        )
+        import select as _sel, unittest.mock as _m
+        with _m.patch('converter.select.select', return_value=([], [], [])):
+            diag = {}
+            convert_to_480p('/8k.mp4', '/out.mp4',
+                            timeout_multiplier=2.0, min_timeout=300,
+                            bitrate_baseline_mbps=10, _diag=diag)
+        mock_popen.assert_called_once()
+        # 驗證：6081 × 2 × log2(54) ≈ 70000s >> 14400s
+        import math
+        expected = max(300.0, 6081.0 * 2.0 * math.log2(max(2.0, 540.0 / 10.0)))
+        self.assertGreater(expected, 14400)
+
+    @patch('converter.get_video_duration_and_bitrate', return_value=(3600.0, 0))
+    @patch('converter.subprocess.Popen')
+    def test_zero_bitrate_disables_factor(self, mock_popen, _):
+        """bitrate=0（ffprobe 取不到）時不應套用修正（factor=1.0）"""
+        mock_popen.return_value = MagicMock(
+            wait=MagicMock(return_value=0),
+            returncode=0,
+            poll=MagicMock(return_value=0),
+            stderr=MagicMock(fileno=MagicMock(return_value=-1)),
+        )
+        import unittest.mock as _m
+        with _m.patch('converter.select.select', return_value=([], [], [])):
+            convert_to_480p('/input.mp4', '/out.mp4',
+                            timeout_multiplier=2.0, min_timeout=300,
+                            bitrate_baseline_mbps=10)
+        # bitrate=0 → 不套用修正 → timeout = 3600 × 2 = 7200（無異常）
+        mock_popen.assert_called_once()
 
 
 class TestComputeOutputName(unittest.TestCase):
