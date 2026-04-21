@@ -234,15 +234,6 @@ python3 init_db.py          # 自動建立 ./data/converter.db 及所有資料�
 | `FFMPEG_TIMEOUT_MULTIPLIER` | 動態 timeout 倍數（`FFMPEG_TIMEOUT=0` 時生效）；`timeout = max(FFMPEG_TIMEOUT_MIN, 時長 × 此值 × bitrate_factor)`（預設：`2.0`） |
 | `FFMPEG_TIMEOUT_MIN` | 動態 timeout 最低保障秒數，避免極短影片 timeout 過短（預設：`300`） |
 | `BITRATE_BASELINE_MBPS` | 動態 timeout 的 bitrate 修正基準（Mbps）；`bitrate_factor = log2(max(2, src_Mbps / 此值))`，高 bitrate 來源（如 8K 540 Mbps）自動延長 timeout；`0` 停用修正（預設：`10`） |
-
-  **bitrate_factor 情境範例**（`BITRATE_BASELINE_MBPS=10`）：
-
-  | 來源規格 | src Mbps | factor | 時長 6000s × 2.0 × factor |
-  |---------|---------|--------|--------------------------|
-  | 低 bitrate（< 10 Mbps） | 2 | 1.0（下限保護） | 12,000s（3.3h） |
-  | 一般 1080p | 10 | 1.0 | 12,000s（3.3h） |
-  | 高品質 1080p | 30 | 1.6 | 19,200s（5.3h） |
-  | 8K 540 Mbps HEVC | 540 | 5.75 | 69,000s（19h） |
 | `FFMPEG_STALL_TIMEOUT` | ffmpeg 無進度輸出超時（秒）；適用於 NFS I/O stall 導致 ffmpeg 停住但不退出的情況；設 `0` 停用（預設：`300`，即 5 分鐘） |
 | `ENABLE_TIME_RESTRICTION` | 設為 `true` 時啟用轉檔時間限制，僅在指定時段內允許轉檔（預設：`false`） |
 | `ALLOWED_START_TIME` | 允許轉檔的開始時間，`HH:MM` 格式（預設：`22:00`） |
@@ -251,6 +242,27 @@ python3 init_db.py          # 自動建立 ./data/converter.db 及所有資料�
 | `LOG_LEVEL` | 日誌等級 |
 | `LOG_MAX_BYTES` | log 單檔大小上限（位元組）；超過自動輪替（預設：`10485760`，即 10MB） |
 | `LOG_BACKUP_COUNT` | 保留舊 log 檔份數（預設：`5`，總計最多 60MB） |
+
+### 動態 Timeout 說明
+
+`FFMPEG_TIMEOUT=0`（預設動態模式）時，timeout 依下列公式計算：
+
+```
+timeout = max(FFMPEG_TIMEOUT_MIN, 時長(s) × FFMPEG_TIMEOUT_MULTIPLIER × bitrate_factor)
+
+bitrate_factor = log2(max(2, src_Mbps / BITRATE_BASELINE_MBPS))
+```
+
+`bitrate_factor` 以 log2 scale 平滑修正高 bitrate 來源的轉碼耗時：低 bitrate 影片不受影響（factor = 1.0），高 bitrate（如 8K RAW）則自動延長 timeout，避免轉碼中途被強制終止。
+
+**情境範例**（`FFMPEG_TIMEOUT_MULTIPLIER=2.0`、`BITRATE_BASELINE_MBPS=10`、來源時長 6000s）：
+
+| 來源規格 | src Mbps | bitrate_factor | timeout（6000s × 2.0 × factor） |
+|---------|---------|---------------|--------------------------------|
+| 低 bitrate（< 10 Mbps） | 2 | 1.0（下限保護） | 12,000s（3.3h） |
+| 一般 1080p | 10 | 1.0 | 12,000s（3.3h） |
+| 高品質 1080p | 30 | 1.6 | 19,200s（5.3h） |
+| 8K 540 Mbps HEVC | 540 | 5.75 | 69,000s（19.2h） |
 
 ---
 
