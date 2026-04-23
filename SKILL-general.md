@@ -166,4 +166,4 @@ DB_PASS=your_password_here
 | NFS 大檔讀取 | TCP buffer 太小（rmem_max < 1MB）會造成 stall；建議 16MB |
 | subprocess pipe | `stdout=PIPE` 但不讀 → fd leak；exception 路徑也要 close |
 | `finally` + `continue` | Python 保證 `finally` 一定執行 |
-| Container metadata（ffprobe 等） | 許多格式的 duration/bitrate 來自 header，截斷的檔案仍回傳 header 宣稱值；無法僅靠 metadata 判斷檔案完整性 |
+| 媒體檔案 metadata 驗證 | 許多格式的 duration/bitrate 存於 header；截斷的檔案仍可能回傳完整 metadata，無法僅靠 metadata 判斷內容完整性 |

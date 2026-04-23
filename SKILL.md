@@ -111,8 +111,8 @@
 
 ### 常見 false positive（不需修改）
 
-- Python `finally` 遇到 `continue`/`break`/`return` **仍然會執行**（已驗證）
-- SQL 注入疑慮：f-string 只包含 `%s` 佔位符，資料另外傳入 → 安全
+詳見 `SKILL-general.md §2`，本專案額外補充：
+- SQL 注入疑慮：f-string 只包含 `%s` 佔位符，資料另外傳入 → 安全（`db_manager.execute_query` 的呼叫模式）
 
 ---
 
@@ -195,6 +195,27 @@ db_manager.execute_query(
 `process_daemon` 取任務順序：`ORDER BY retry_count ASC, created_at ASC`
 - 先處理**全新任務**（retry_count=0），再處理重試任務
 - 不會讓舊的重試任務無限期阻塞新任務
+
+### 任務鎖機制
+
+`acquire_task_lock()` 使用兩階段設計，避免誤把「追蹤表」當成鎖：
+
+1. **並發控制**：`UPDATE conversion_tasks SET is_processing=TRUE WHERE status='pending' AND is_processing=FALSE` — 行級鎖確保原子性，rowcount=0 表示已被搶走
+2. **審計記錄**：`INSERT IGNORE INTO processing_lock` — 僅供除錯查詢，失敗不影響主流程
+
+> `processing_lock` 表**不是**並發控制手段，只是輔助追蹤。
+
+### RETRY_INTERVAL_CYCLES 的 modulo 陷阱
+
+```python
+# ❌ 錯誤：cycles=1 時永遠為 False（0 % 1 == 0，不是 1）
+if current_cycle % retry_interval_cycles == 1:
+
+# ✅ 正確
+if current_cycle % retry_interval_cycles == 0:
+```
+
+歷史 bug：`== 1` 在設定值為 1 時導致 retry 邏輯完全不觸發。
 
 ---
 
@@ -379,6 +400,8 @@ process_daemon 的 stale cleanup 會**自動**殺掉與 stale task 對應的孤�
 python3 conv_admin.py --kill-stale-ffmpeg --dry-run  # 先確認
 python3 conv_admin.py --kill-stale-ffmpeg             # 實際執行
 ```
+
+> **注意**：若 daemon 以不同使用者身分執行（例如透過 systemd），`os.kill()` 可能拋出 `PermissionError`。程式會記錄 warning 並繼續處理，不中斷清理流程。
 
 ---
 
