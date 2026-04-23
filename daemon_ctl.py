@@ -57,7 +57,7 @@ def make_scan_daemon():
 
 def make_process_daemon():
     from daemons.process_daemon import ProcessDaemon
-    check_interval = int(os.getenv('CHECK_INTERVAL', '60'))
+    check_interval = int(os.getenv('CHECK_INTERVAL', '300'))
     max_workers = int(os.getenv('MAX_WORKERS', '2'))
     return ProcessDaemon(check_interval=check_interval, max_workers=max_workers)
 

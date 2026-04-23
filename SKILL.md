@@ -29,8 +29,8 @@
 | 類型 | 範例 | 正確處理方式 |
 |------|------|------|
 | NFS server hostname / IP | `nas.example.org` | 放在 `.env`（已 gitignore） |
-| NFS export 路徑 | `/share/video` | 放在 `.env` 的 `WATCH_DIR` |
-| 本機掛載點（若含組織識別） | `/ORGNAME` | 統一以 `$WATCH_DIR` 指稱 |
+| NFS export 路徑 | `/share/video` | 放在 `.env` 的 `INPUT_DIRECTORY` |
+| 本機掛載點（若含組織識別） | `/ORGNAME` | 統一以 `$INPUT_DIRECTORY` 指稱 |
 | DB 主機 / 帳號 / 密碼 | `DB_HOST`, `DB_USER`, `DB_PASS` | 放在 `.env` |
 | 影片目錄或檔名（含組織、人名） | 頻道名稱、講師名稱 | 除錯時僅放在私人 session，不 commit |
 | 任何 API key / token | — | 放在 `.env` |
@@ -46,7 +46,7 @@
 
 ## 系統概覽
 
-- **目的**：掃描 NFS 掛載的 NAS（掛載點見 `.env` 的 `WATCH_DIR`），將 1080p 影片批次轉換為 480p H.264
+- **目的**：掃描 NFS 掛載的 NAS（掛載點見 `.env` 的 `INPUT_DIRECTORY`），將 1080p 影片批次轉換為 480p H.264
 - **架構**：三個 daemon（`scan_daemon`、`process_daemon`、`api_server`）+ `conv_admin.py` 管理工具
 - **資料庫**：MariaDB（主要）或 SQLite（透過 `sql_dialect.py` 抽象層支援兩者）
 - **NFS 掛載**：NFSv4.1，`rsize/wsize=1MB`，`hard`（詳細 host/路徑見 `.env`，不放入版本控制）
@@ -168,6 +168,8 @@ pending → processing → completed
 | `RETRY_INTERVAL_CYCLES` | 每幾個 check cycle 重試一次 failed tasks | `10` |
 | `MAX_RETRIES` | 最多重試次數 | `3` |
 | `DURATION_THRESHOLD` | 輸出與來源時長差異容忍值（秒） | `2.0` |
+| `SCAN_INTERVAL` | scan_daemon 掃描間隔（秒） | `300`（NFS 建議 `1800`） |
+| `CHECK_INTERVAL` | process_daemon 輪詢間隔（秒） | `300` |
 
 ### 手動操作
 
@@ -354,6 +356,29 @@ print(rows)
 - 透過 `sql_dialect.py` 的抽象層，`%s` 佔位符在兩個 DB 都可用
 - SQLite 適合測試環境和輕量部署
 - MariaDB 用於生產環境（支援高並發、deadlock 偵測）
+
+### 時間限制（Time Restriction）
+
+`process_daemon` 可設定只在特定時段轉檔（例如夜間避開上班時間）：
+
+```bash
+ENABLE_TIME_RESTRICTION=true
+ALLOWED_START_TIME=22:00   # 開始時間（24 小時制）
+ALLOWED_END_TIME=06:00     # 結束時間（可跨午夜）
+```
+
+- 停用時（`false`）：全天候轉檔
+- 時間外收到任務：daemon 不取新任務，但不影響 scan_daemon 掃描入庫
+- `conv_admin.py --stats` 會顯示目前是否在允許時段內
+
+### 孤立 ffmpeg 處理
+
+process_daemon 的 stale cleanup 會**自動**殺掉與 stale task 對應的孤立 ffmpeg 進程。手動操作：
+
+```bash
+python3 conv_admin.py --kill-stale-ffmpeg --dry-run  # 先確認
+python3 conv_admin.py --kill-stale-ffmpeg             # 實際執行
+```
 
 ---
 

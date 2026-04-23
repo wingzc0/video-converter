@@ -90,7 +90,7 @@ class ProcessDaemon(BaseDaemon):
         stale_hours (float): 判定任務 stale 的閒置時數（來自 STALE_HOURS 環境變數）
     """
     
-    def __init__(self, check_interval=60, max_workers=2):
+    def __init__(self, check_interval=300, max_workers=2):
         """初始化處理 Daemon。
 
         Args:
