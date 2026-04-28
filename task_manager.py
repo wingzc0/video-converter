@@ -187,6 +187,36 @@ class TaskRepository:
             self._logger.error(f"Error getting recent failed tasks: {str(e)}")
             return []
 
+    def list_tasks(self, statuses, limit=10):
+        """回傳指定狀態的任務清單（依 updated_at DESC）。
+
+        Args:
+            statuses: 狀態清單，例如 ['pending'] 或 ['failed', 'processing']。
+                      有效值：pending, processing, completed, failed。
+            limit:    回傳筆數上限（預設 10）。
+
+        Returns:
+            list of dict，每筆含 id, input_path, output_path, status,
+            retry_count, created_at, updated_at。查詢失敗時回傳空清單。
+        """
+        valid = {'pending', 'processing', 'completed', 'failed'}
+        statuses = [s for s in statuses if s in valid]
+        if not statuses:
+            return []
+        placeholders = ', '.join(['%s'] * len(statuses))
+        try:
+            return db_manager.execute_query(
+                f"SELECT id, input_path, output_path, status, retry_count, "
+                f"created_at, updated_at "
+                f"FROM conversion_tasks "
+                f"WHERE status IN ({placeholders}) "
+                f"ORDER BY updated_at DESC LIMIT %s",
+                (*statuses, limit), fetch=True
+            )
+        except Exception as e:
+            self._logger.error(f"Error listing tasks: {str(e)}")
+            return []
+
     # ------------------------------------------------------------------
     # Write operations — task status
     # ------------------------------------------------------------------

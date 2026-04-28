@@ -679,5 +679,77 @@ class TestCmdTaskInfo(unittest.TestCase):
         self.assertIn('5m', output)
 
 
+class TestCmdListTasks(unittest.TestCase):
+    """cmd_list_tasks() — 列出指定狀態的任務"""
+
+    def _make_task(self, tid, status='pending'):
+        return {
+            'id': tid,
+            'input_path': f'/nas/video{tid}.avi',
+            'output_path': f'/out/480p_video{tid}.mp4',
+            'status': status,
+            'retry_count': 0,
+            'created_at': '2024-01-01 09:00:00',
+            'updated_at': '2024-01-01 10:00:00',
+        }
+
+    @patch('task_manager.db_manager')
+    def test_shows_tasks(self, mock_db):
+        """有結果時應印出任務列表"""
+        mock_db.execute_query.return_value = [self._make_task(1), self._make_task(2)]
+        printed = []
+        with patch('builtins.print', side_effect=lambda *a, **kw: printed.append(' '.join(str(x) for x in a))):
+            from conv_admin import cmd_list_tasks
+            cmd_list_tasks(['pending'], limit=10)
+        output = '\n'.join(printed)
+        self.assertIn('1', output)
+        self.assertIn('2', output)
+        self.assertIn('pending', output)
+
+    @patch('task_manager.db_manager')
+    def test_no_results_prints_message(self, mock_db):
+        """無結果時應印出提示，不拋出例外"""
+        mock_db.execute_query.return_value = []
+        printed = []
+        with patch('builtins.print', side_effect=lambda *a, **kw: printed.append(' '.join(str(x) for x in a))):
+            from conv_admin import cmd_list_tasks
+            cmd_list_tasks(['failed'], limit=10)
+        self.assertTrue(any('No tasks' in l for l in printed))
+
+    @patch('task_manager.db_manager')
+    def test_invalid_status_warns_and_skips(self, mock_db):
+        """完全無效的狀態應印出警告，不查詢 DB"""
+        printed = []
+        with patch('builtins.print', side_effect=lambda *a, **kw: printed.append(' '.join(str(x) for x in a))):
+            from conv_admin import cmd_list_tasks
+            cmd_list_tasks(['bogus'])
+        mock_db.execute_query.assert_not_called()
+        self.assertTrue(any('bogus' in l for l in printed))
+
+    @patch('task_manager.db_manager')
+    def test_multiple_statuses_passed_to_db(self, mock_db):
+        """多個狀態應全部傳入 DB 查詢"""
+        mock_db.execute_query.return_value = []
+        with patch('builtins.print'):
+            from conv_admin import cmd_list_tasks
+            cmd_list_tasks(['pending', 'failed'], limit=5)
+        call_args = mock_db.execute_query.call_args
+        params = call_args[0][1]  # positional second arg = params tuple
+        self.assertIn('pending', params)
+        self.assertIn('failed', params)
+        self.assertIn(5, params)
+
+    @patch('task_manager.db_manager')
+    def test_limit_passed_to_db(self, mock_db):
+        """limit 參數應傳入 DB 查詢"""
+        mock_db.execute_query.return_value = []
+        with patch('builtins.print'):
+            from conv_admin import cmd_list_tasks
+            cmd_list_tasks(['completed'], limit=25)
+        call_args = mock_db.execute_query.call_args
+        params = call_args[0][1]
+        self.assertIn(25, params)
+
+
 if __name__ == '__main__':
     unittest.main()

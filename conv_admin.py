@@ -14,6 +14,7 @@ bcvnas-converter 資料庫診斷與維護工具
   python3 conv_admin.py --reset-maxed-failed [--max-retries N]
   python3 conv_admin.py --reset-task ID [ID ...]
   python3 conv_admin.py --task-info ID [ID ...]
+  python3 conv_admin.py --list-tasks [--status STATUS [STATUS ...]] [--limit N]
   python3 conv_admin.py --add-file FILE [FILE ...]
   python3 conv_admin.py --kill-stale-ffmpeg [--dry-run]
 """
@@ -512,6 +513,45 @@ def cmd_task_info(task_ids):
 
 
 # ---------------------------------------------------------------------------
+# List tasks
+# ---------------------------------------------------------------------------
+
+_VALID_STATUSES = {'pending', 'processing', 'completed', 'failed'}
+
+
+def cmd_list_tasks(statuses, limit=10):
+    """列出指定狀態的任務，依 updated_at 由新到舊排序。
+
+    Args:
+        statuses: 狀態清單（可多個），有效值：pending / processing / completed / failed。
+        limit:    最多顯示幾筆（預設 10）。
+
+    無效狀態會被跳過並印出警告；若全部無效則直接返回。
+    """
+    invalid = [s for s in statuses if s not in _VALID_STATUSES]
+    for s in invalid:
+        print(f"  ⚠ Unknown status '{s}', skipping.")
+    valid = [s for s in statuses if s in _VALID_STATUSES]
+    if not valid:
+        print("No valid statuses specified.")
+        return
+
+    task_repo = TaskRepository()
+    tasks = task_repo.list_tasks(valid, limit=limit)
+
+    status_label = ', '.join(valid)
+    if not tasks:
+        print(f"No tasks found with status: {status_label}")
+        return
+
+    print(f"Showing {len(tasks)} task(s) with status [{status_label}] (limit={limit}):\n")
+    for t in tasks:
+        filename = Path(t['input_path']).name
+        print(f"  [{t['id']:>6}] {t['status']:<12} retries={t['retry_count']}  "
+              f"updated={t['updated_at']}  {filename}")
+
+
+# ---------------------------------------------------------------------------
 # Argument parser & entry point
 # ---------------------------------------------------------------------------
 
@@ -533,6 +573,9 @@ def parse_arguments():
   python3 conv_admin.py --reset-task 123 456 789 --dry-run
   python3 conv_admin.py --task-info 123
   python3 conv_admin.py --task-info 123 456 789
+  python3 conv_admin.py --list-tasks
+  python3 conv_admin.py --list-tasks --status failed
+  python3 conv_admin.py --list-tasks --status failed processing --limit 20
   python3 conv_admin.py --add-file /mnt/nas/path/to/video.mp4
   python3 conv_admin.py --add-file /mnt/nas/a.mp4 /mnt/nas/b.mkv
   python3 conv_admin.py --add-file /mnt/nas/a.mp4 --dry-run
@@ -551,6 +594,8 @@ def parse_arguments():
                         help='重設指定 task ID 為 pending（retry_count 歸零）')
     action.add_argument('--task-info',           nargs='+', type=int, metavar='ID',
                         help='顯示指定 task ID 的完整資訊（DB 欄位 + 磁碟狀態）')
+    action.add_argument('--list-tasks',          action='store_true',
+                        help='列出任務（依狀態篩選，搭配 --status 與 --limit）')
     action.add_argument('--add-file',            nargs='+', metavar='FILE',
                         help='手動新增指定影片檔至轉檔資料庫')
     action.add_argument('--kill-stale-ffmpeg',   action='store_true', help='Kill 不在 process daemon 下且 source file 有 DB 記錄的孤兒 ffmpeg 程序')
@@ -561,6 +606,12 @@ def parse_arguments():
                         help='最大重試次數（預設 3，僅用於 --retry-failed）')
     parser.add_argument('--failed-limit', type=int, default=5,
                         help='--stats 時印出最近失敗任務的數量（預設 5；設為 0 不印）')
+    parser.add_argument('--status', nargs='+', default=['pending'],
+                        metavar='STATUS',
+                        help='--list-tasks 的篩選狀態（預設 pending；可多個，'
+                             '有效值：pending processing completed failed）')
+    parser.add_argument('--limit', type=int, default=10,
+                        help='--list-tasks 顯示的最大任務數（預設 10）')
     parser.add_argument('--dry-run', action='store_true',
                         help='僅顯示會執行的操作，不實際寫入（支援 --kill-stale-ffmpeg、--reset-task、--add-file）')
     return parser.parse_args()
@@ -583,6 +634,8 @@ def main():
         cmd_reset_task(args.reset_task, dry_run=args.dry_run)
     elif args.task_info:
         cmd_task_info(args.task_info)
+    elif args.list_tasks:
+        cmd_list_tasks(args.status, limit=args.limit)
     elif args.add_file:
         cmd_add_file(args.add_file, dry_run=args.dry_run)
     elif args.kill_stale_ffmpeg:
