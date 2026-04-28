@@ -477,10 +477,23 @@ def cmd_task_info(task_ids):
 
         src = Path(t['input_path'])
         out = Path(t['output_path'])
-        src_exists = src.exists()
-        out_exists = out.exists()
-        src_size   = f"{src.stat().st_size / (1024**3):.2f} GB" if src_exists else "—"
-        out_size   = f"{out.stat().st_size / (1024**3):.2f} GB" if out_exists else "—"
+
+        # Use stat() directly to avoid TOCTOU race; treat OSError as missing.
+        try:
+            src_stat   = src.stat()
+            src_exists = True
+            src_size   = f"{src_stat.st_size / (1024**3):.2f} GB"
+        except OSError:
+            src_exists = False
+            src_size   = "—"
+
+        try:
+            out_stat   = out.stat()
+            out_exists = True
+            out_size   = f"{out_stat.st_size / (1024**3):.2f} GB"
+        except OSError:
+            out_exists = False
+            out_size   = "—"
 
         elapsed_str = "—"
         if t['start_time'] and t['end_time']:
