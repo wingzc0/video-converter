@@ -174,6 +174,16 @@ pending → processing → completed
 ### 手動操作
 
 ```bash
+# 查看特定任務完整資訊（DB 欄位 + 磁碟狀態）
+python3 conv_admin.py --task-info 17879
+python3 conv_admin.py --task-info 17879 17500
+
+# 列出 pending 任務（預設）
+python3 conv_admin.py --list-tasks
+
+# 列出 failed 任務（最多 50 筆）
+python3 conv_admin.py --list-tasks --status failed --limit 50
+
 # 重置所有 maxed-failed tasks
 python3 conv_admin.py --reset-maxed-failed
 

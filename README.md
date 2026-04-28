@@ -391,6 +391,10 @@ python monitor_daemons.py -c
 | `--kill-stale-ffmpeg` | Kill 不在 process daemon 子孫樹下且 source file 有 DB 記錄的孤兒 ffmpeg 程序 |
 | `--dry-run` | 僅顯示會執行的操作，不實際寫入（支援 `--kill-stale-ffmpeg`、`--reset-task`、`--add-file`） |
 | `--reset-task ID [ID ...]` | 將指定任務重設為 pending（retry_count 歸零、清除錯誤訊息） |
+| `--task-info ID [ID ...]` | 顯示指定 task ID 的完整資訊（所有 DB 欄位 + 磁碟狀態） |
+| `--list-tasks` | 列出任務（依狀態篩選，搭配 `--status` 與 `--limit`） |
+| `--status STATUS [STATUS ...]` | `--list-tasks` 的篩選狀態（預設 pending；可多個，有效值：pending processing completed failed） |
+| `--limit N` | `--list-tasks` 顯示的最大任務數（預設 10） |
 | `--add-file FILE [FILE ...]` | 手動將指定影片檔加入轉檔佇列（跳過掃描 daemon） |
 
 ## 使用範例
@@ -427,6 +431,19 @@ python3 conv_admin.py --kill-stale-ffmpeg
 python3 conv_admin.py --reset-task 42
 python3 conv_admin.py --reset-task 42 43 44
 python3 conv_admin.py --reset-task 42 43 44 --dry-run
+
+# 查看特定任務的完整資訊（DB 欄位 + 磁碟狀態）
+python3 conv_admin.py --task-info 123
+python3 conv_admin.py --task-info 123 456 789
+
+# 列出 pending 任務（預設）
+python3 conv_admin.py --list-tasks
+
+# 列出 failed 任務
+python3 conv_admin.py --list-tasks --status failed
+
+# 列出多種狀態的任務，限制顯示 20 筆
+python3 conv_admin.py --list-tasks --status failed processing --limit 20
 
 # 手動將影片檔加入佇列（適用於 scan daemon 尚未掃描到的檔案）
 python3 conv_admin.py --add-file /path/to/video.mp4
