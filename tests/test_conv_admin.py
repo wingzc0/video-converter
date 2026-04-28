@@ -616,7 +616,7 @@ class TestCmdTaskInfo(unittest.TestCase):
         mock_db.execute_query.return_value = [self._make_task()]
         printed = []
         with patch('builtins.print', side_effect=lambda *a, **kw: printed.append(' '.join(str(x) for x in a))), \
-             patch('pathlib.Path.exists', return_value=False):
+             patch('pathlib.Path.stat', side_effect=OSError):
             from conv_admin import cmd_task_info
             cmd_task_info([42])
         output = '\n'.join(printed)
@@ -645,7 +645,7 @@ class TestCmdTaskInfo(unittest.TestCase):
         ]
         printed = []
         with patch('builtins.print', side_effect=lambda *a, **kw: printed.append(' '.join(str(x) for x in a))), \
-             patch('pathlib.Path.exists', return_value=False):
+             patch('pathlib.Path.stat', side_effect=OSError):
             from conv_admin import cmd_task_info
             cmd_task_info([42])
         self.assertTrue(any('NFS stall detected' in l for l in printed))
@@ -658,7 +658,7 @@ class TestCmdTaskInfo(unittest.TestCase):
             [self._make_task(id=2)],
         ]
         with patch('builtins.print'), \
-             patch('pathlib.Path.exists', return_value=False):
+             patch('pathlib.Path.stat', side_effect=OSError):
             from conv_admin import cmd_task_info
             cmd_task_info([1, 2])
         self.assertEqual(mock_db.execute_query.call_count, 2)
@@ -671,12 +671,38 @@ class TestCmdTaskInfo(unittest.TestCase):
         ]
         printed = []
         with patch('builtins.print', side_effect=lambda *a, **kw: printed.append(' '.join(str(x) for x in a))), \
-             patch('pathlib.Path.exists', return_value=False):
+             patch('pathlib.Path.stat', side_effect=OSError):
             from conv_admin import cmd_task_info
             cmd_task_info([42])
         output = '\n'.join(printed)
         self.assertIn('1h', output)
         self.assertIn('5m', output)
+
+    @patch('task_manager.db_manager')
+    def test_stat_oserror_shows_missing(self, mock_db):
+        """stat() 拋出 OSError 時應顯示 missing，不拋出例外"""
+        mock_db.execute_query.return_value = [self._make_task()]
+        printed = []
+        with patch('builtins.print', side_effect=lambda *a, **kw: printed.append(' '.join(str(x) for x in a))), \
+             patch('pathlib.Path.stat', side_effect=OSError):
+            from conv_admin import cmd_task_info
+            cmd_task_info([42])
+        self.assertTrue(any('missing' in l for l in printed))
+
+    @patch('task_manager.db_manager')
+    def test_negative_elapsed_shows_warning(self, mock_db):
+        """end_time < start_time 時應顯示警告，不顯示負值"""
+        mock_db.execute_query.return_value = [
+            self._make_task(start_time='2024-01-01 11:00:00', end_time='2024-01-01 10:00:00')
+        ]
+        printed = []
+        with patch('builtins.print', side_effect=lambda *a, **kw: printed.append(' '.join(str(x) for x in a))), \
+             patch('pathlib.Path.stat', side_effect=OSError):
+            from conv_admin import cmd_task_info
+            cmd_task_info([42])
+        output = '\n'.join(printed)
+        self.assertIn('invalid', output)
+        self.assertNotIn('-1h', output)
 
 
 class TestCmdListTasks(unittest.TestCase):

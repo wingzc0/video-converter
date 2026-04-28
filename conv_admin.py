@@ -501,7 +501,10 @@ def cmd_task_info(task_ids):
                 s = datetime.fromisoformat(str(t['start_time']))
                 e = datetime.fromisoformat(str(t['end_time']))
                 secs = int((e - s).total_seconds())
-                elapsed_str = f"{secs // 3600}h {(secs % 3600) // 60}m {secs % 60}s"
+                if secs < 0:
+                    elapsed_str = "⚠ invalid (end < start)"
+                else:
+                    elapsed_str = f"{secs // 3600}h {(secs % 3600) // 60}m {secs % 60}s"
             except (ValueError, TypeError):
                 pass
 
