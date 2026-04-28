@@ -13,6 +13,7 @@ bcvnas-converter 資料庫診斷與維護工具
   python3 conv_admin.py --cleanup-stale [--stale-hours N]
   python3 conv_admin.py --reset-maxed-failed [--max-retries N]
   python3 conv_admin.py --reset-task ID [ID ...]
+  python3 conv_admin.py --task-info ID [ID ...]
   python3 conv_admin.py --add-file FILE [FILE ...]
   python3 conv_admin.py --kill-stale-ffmpeg [--dry-run]
 """
@@ -455,6 +456,62 @@ def cmd_add_file(file_paths, dry_run=False):
 
 
 # ---------------------------------------------------------------------------
+# Task info
+# ---------------------------------------------------------------------------
+
+def cmd_task_info(task_ids):
+    """顯示指定 task ID 的完整資訊，包含所有 DB 欄位及來源/輸出檔案的磁碟狀態。
+
+    Args:
+        task_ids: 要查詢的任務 ID 清單（整數）。
+
+    不存在的 ID 會顯示錯誤訊息並繼續處理下一個。
+    """
+    task_repo = TaskRepository()
+    for tid in task_ids:
+        t = task_repo.get_full_task_info(tid)
+        if t is None:
+            print(f"  ❌ Task {tid} not found.\n")
+            continue
+
+        src = Path(t['input_path'])
+        out = Path(t['output_path'])
+        src_exists = src.exists()
+        out_exists = out.exists()
+        src_size   = f"{src.stat().st_size / (1024**3):.2f} GB" if src_exists else "—"
+        out_size   = f"{out.stat().st_size / (1024**3):.2f} GB" if out_exists else "—"
+
+        elapsed_str = "—"
+        if t['start_time'] and t['end_time']:
+            try:
+                s = datetime.fromisoformat(str(t['start_time']))
+                e = datetime.fromisoformat(str(t['end_time']))
+                secs = int((e - s).total_seconds())
+                elapsed_str = f"{secs // 3600}h {(secs % 3600) // 60}m {secs % 60}s"
+            except (ValueError, TypeError):
+                pass
+
+        src_flag = "✅" if src_exists else "❌ missing"
+        out_flag = "✅" if out_exists else "❌ missing"
+
+        print(f"=== Task {t['id']} ===")
+        print(f"  Status       : {t['status']}  (is_processing={bool(t['is_processing'])})")
+        print(f"  Progress     : {t['progress']}%")
+        print(f"  Retry count  : {t['retry_count']}")
+        print(f"  Resolution   : {t['source_resolution']} → {t['target_resolution']}")
+        print(f"  Created at   : {t['created_at']}")
+        print(f"  Updated at   : {t['updated_at']}")
+        print(f"  Start time   : {t['start_time'] or '—'}")
+        print(f"  End time     : {t['end_time'] or '—'}")
+        print(f"  Elapsed      : {elapsed_str}")
+        print(f"  Source  [{src_flag}] {src_size:>10}  {src}")
+        print(f"  Output  [{out_flag}] {out_size:>10}  {out}")
+        if t['error_message']:
+            print(f"  Error        : {t['error_message']}")
+        print()
+
+
+# ---------------------------------------------------------------------------
 # Argument parser & entry point
 # ---------------------------------------------------------------------------
 
@@ -474,6 +531,8 @@ def parse_arguments():
   python3 conv_admin.py --reset-maxed-failed --max-retries 5
   python3 conv_admin.py --reset-task 123 456 789
   python3 conv_admin.py --reset-task 123 456 789 --dry-run
+  python3 conv_admin.py --task-info 123
+  python3 conv_admin.py --task-info 123 456 789
   python3 conv_admin.py --add-file /mnt/nas/path/to/video.mp4
   python3 conv_admin.py --add-file /mnt/nas/a.mp4 /mnt/nas/b.mkv
   python3 conv_admin.py --add-file /mnt/nas/a.mp4 --dry-run
@@ -490,6 +549,8 @@ def parse_arguments():
     action.add_argument('--reset-maxed-failed',  action='store_true', help='重設已達重試上限的失敗任務為 pending（retry_count 歸零）')
     action.add_argument('--reset-task',          nargs='+', type=int, metavar='ID',
                         help='重設指定 task ID 為 pending（retry_count 歸零）')
+    action.add_argument('--task-info',           nargs='+', type=int, metavar='ID',
+                        help='顯示指定 task ID 的完整資訊（DB 欄位 + 磁碟狀態）')
     action.add_argument('--add-file',            nargs='+', metavar='FILE',
                         help='手動新增指定影片檔至轉檔資料庫')
     action.add_argument('--kill-stale-ffmpeg',   action='store_true', help='Kill 不在 process daemon 下且 source file 有 DB 記錄的孤兒 ffmpeg 程序')
@@ -520,6 +581,8 @@ def main():
         cmd_reset_maxed_failed(args.max_retries)
     elif args.reset_task:
         cmd_reset_task(args.reset_task, dry_run=args.dry_run)
+    elif args.task_info:
+        cmd_task_info(args.task_info)
     elif args.add_file:
         cmd_add_file(args.add_file, dry_run=args.dry_run)
     elif args.kill_stale_ffmpeg:

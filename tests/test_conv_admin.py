@@ -587,5 +587,97 @@ class TestCmdStats(unittest.TestCase):
         self.assertTrue(any('No data' in l for l in printed))
 
 
+class TestCmdTaskInfo(unittest.TestCase):
+    """cmd_task_info() — 顯示指定 task ID 的完整資訊"""
+
+    def _make_task(self, **kwargs):
+        defaults = {
+            'id': 42,
+            'input_path': '/nas/video.avi',
+            'output_path': '/out/480p_video.mp4',
+            'source_resolution': '720x480',
+            'target_resolution': '480p',
+            'status': 'completed',
+            'progress': 100.00,
+            'is_processing': False,
+            'start_time': '2024-01-01 10:00:00',
+            'end_time': '2024-01-01 10:30:00',
+            'error_message': None,
+            'retry_count': 0,
+            'created_at': '2024-01-01 09:00:00',
+            'updated_at': '2024-01-01 10:30:00',
+        }
+        defaults.update(kwargs)
+        return defaults
+
+    @patch('task_manager.db_manager')
+    def test_shows_task_info(self, mock_db):
+        """有效 task ID 應印出欄位資訊"""
+        mock_db.execute_query.return_value = [self._make_task()]
+        printed = []
+        with patch('builtins.print', side_effect=lambda *a, **kw: printed.append(' '.join(str(x) for x in a))), \
+             patch('pathlib.Path.exists', return_value=False):
+            from conv_admin import cmd_task_info
+            cmd_task_info([42])
+        output = '\n'.join(printed)
+        self.assertIn('Task 42', output)
+        self.assertIn('completed', output)
+        self.assertIn('720x480', output)
+        self.assertIn('480p', output)
+
+    @patch('task_manager.db_manager')
+    def test_not_found_prints_error(self, mock_db):
+        """不存在的 task ID 應印出錯誤訊息，不拋出例外"""
+        mock_db.execute_query.return_value = []
+        printed = []
+        with patch('builtins.print', side_effect=lambda *a, **kw: printed.append(' '.join(str(x) for x in a))):
+            from conv_admin import cmd_task_info
+            cmd_task_info([999])
+        output = '\n'.join(printed)
+        self.assertIn('999', output)
+        self.assertIn('not found', output)
+
+    @patch('task_manager.db_manager')
+    def test_shows_error_message_when_present(self, mock_db):
+        """有 error_message 的任務應印出錯誤訊息"""
+        mock_db.execute_query.return_value = [
+            self._make_task(status='failed', error_message='NFS stall detected')
+        ]
+        printed = []
+        with patch('builtins.print', side_effect=lambda *a, **kw: printed.append(' '.join(str(x) for x in a))), \
+             patch('pathlib.Path.exists', return_value=False):
+            from conv_admin import cmd_task_info
+            cmd_task_info([42])
+        self.assertTrue(any('NFS stall detected' in l for l in printed))
+
+    @patch('task_manager.db_manager')
+    def test_multiple_ids_all_queried(self, mock_db):
+        """多個 task ID 應各自查詢 DB"""
+        mock_db.execute_query.side_effect = [
+            [self._make_task(id=1)],
+            [self._make_task(id=2)],
+        ]
+        with patch('builtins.print'), \
+             patch('pathlib.Path.exists', return_value=False):
+            from conv_admin import cmd_task_info
+            cmd_task_info([1, 2])
+        self.assertEqual(mock_db.execute_query.call_count, 2)
+
+    @patch('task_manager.db_manager')
+    def test_elapsed_computed_from_timestamps(self, mock_db):
+        """start/end_time 齊全時應計算並顯示 elapsed"""
+        mock_db.execute_query.return_value = [
+            self._make_task(start_time='2024-01-01 10:00:00', end_time='2024-01-01 11:05:30')
+        ]
+        printed = []
+        with patch('builtins.print', side_effect=lambda *a, **kw: printed.append(' '.join(str(x) for x in a))), \
+             patch('pathlib.Path.exists', return_value=False):
+            from conv_admin import cmd_task_info
+            cmd_task_info([42])
+        output = '\n'.join(printed)
+        self.assertIn('1h', output)
+        self.assertIn('5m', output)
+
+
 if __name__ == '__main__':
     unittest.main()
