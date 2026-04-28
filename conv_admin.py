@@ -562,9 +562,10 @@ def cmd_list_tasks(statuses, limit=10):
 
     print(f"Showing {len(tasks)} task(s) with status [{status_label}] (limit={limit}):\n")
     for t in tasks:
-        filename = Path(t['input_path']).name
+        p = Path(t['input_path'])
+        display = f"{p.parent.name}/{p.name}"
         print(f"  [{t['id']:>6}] {t['status']:<12} retries={t['retry_count']}  "
-              f"updated={t['updated_at']}  {filename}")
+              f"updated={t['updated_at']}  {display}")
 
 
 # ---------------------------------------------------------------------------
