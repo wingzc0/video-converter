@@ -478,5 +478,73 @@ class TestComputeOutputName(unittest.TestCase):
         )
 
 
+class TestConvertTo480pEdgePaths(unittest.TestCase):
+    """convert_to_480p() — absolute timeout 與 stderr loop exception 路徑"""
+
+    def setUp(self):
+        self._fds_to_close = []
+
+    def tearDown(self):
+        import os as _os
+        for fd in self._fds_to_close:
+            try:
+                _os.close(fd)
+            except OSError:
+                pass
+
+    @patch('converter.get_video_duration_and_bitrate', return_value=(100.0, 0))
+    @patch('converter.subprocess.Popen')
+    def test_absolute_timeout_kills_ffmpeg(self, mock_popen, _):
+        """ffmpeg_timeout 到期後應殺掉 ffmpeg 並回傳 (False, 含 'absolute timeout' 的訊息)"""
+        import os as _os
+        r_fd, w_fd = _os.pipe()
+        self._fds_to_close.append(r_fd)
+
+        mock_proc = MagicMock()
+        mock_proc.stderr.fileno.return_value = r_fd
+        mock_proc.poll.return_value = None  # 持續運行中
+
+        def _do_kill():
+            try:
+                _os.close(w_fd)  # 關閉寫端 → r_fd 得到 EOF，解除 select() 阻塞
+            except OSError:
+                pass
+            mock_proc.poll.return_value = -9
+
+        mock_proc.kill.side_effect = _do_kill
+        mock_proc.wait.return_value = -9
+        mock_popen.return_value = mock_proc
+
+        success, error = convert_to_480p(
+            '/input.mp4', '/output.mp4',
+            ffmpeg_timeout=1,  # 1 秒絕對超時
+        )
+        self.assertFalse(success)
+        self.assertIn('absolute timeout', error.lower())
+
+    @patch('converter.get_video_duration_and_bitrate', return_value=(100.0, 0))
+    @patch('converter.subprocess.Popen')
+    def test_stderr_loop_exception_kills_ffmpeg_returns_false(self, mock_popen, _):
+        """stderr 讀取迴圈內發生例外時應 kill ffmpeg 並回傳 (False, <error>)"""
+        import os as _os
+        r_fd, w_fd = _os.pipe()
+        self._fds_to_close.append(r_fd)
+
+        mock_proc = MagicMock()
+        mock_proc.returncode = None
+        mock_proc.poll.return_value = None
+
+        # 讓 fileno() 拋出例外，觸發 try 區塊的 except Exception
+        mock_proc.stderr.fileno.side_effect = OSError("fd already closed")
+        mock_proc.wait.return_value = -9
+        mock_popen.return_value = mock_proc
+
+        success, error = convert_to_480p('/input.mp4', '/output.mp4')
+        self.assertFalse(success)
+        self.assertIsNotNone(error)
+        mock_proc.kill.assert_called_once()
+        mock_proc.wait.assert_called()
+
+
 if __name__ == '__main__':
     unittest.main()

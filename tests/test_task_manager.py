@@ -670,6 +670,116 @@ class TestTaskRepositorySQLite(unittest.TestCase):
         task = repo.get_task_by_id(99999)
         self.assertIsNone(task)
 
+    def test_cleanup_stale_tasks_is_processing_false(self):
+        """is_processing=FALSE + status=processing 的孤兒任務應被 cleanup 清理"""
+        import db_manager as dm
+        # 插入孤兒任務：鎖已釋放（is_processing=0）但 status 仍是 processing
+        dm.db_manager.execute_query(
+            "INSERT INTO conversion_tasks "
+            "(input_path, output_path, status, is_processing, start_time) "
+            "VALUES (%s, %s, 'processing', 0, datetime('now', '-2 hours'))",
+            params=('/in/orphan.mp4', '/out/orphan.mp4'),
+        )
+        rows = dm.db_manager.execute_query(
+            "SELECT id FROM conversion_tasks WHERE input_path='/in/orphan.mp4'",
+            fetch=True,
+        )
+        task_id = rows[0]['id']
+
+        repo = self._repo()
+        cleaned = repo.cleanup_stale_tasks(stale_hours=1)
+        self.assertGreaterEqual(cleaned, 1)
+
+        rows = dm.db_manager.execute_query(
+            "SELECT status FROM conversion_tasks WHERE id=%s",
+            params=(task_id,), fetch=True,
+        )
+        self.assertEqual(rows[0]['status'], 'failed')
+
+    def test_cleanup_stale_tasks_is_processing_true(self):
+        """is_processing=TRUE + status=processing 的 stale 任務應仍被 cleanup 清理"""
+        import db_manager as dm
+        dm.db_manager.execute_query(
+            "INSERT INTO conversion_tasks "
+            "(input_path, output_path, status, is_processing, start_time) "
+            "VALUES (%s, %s, 'processing', 1, datetime('now', '-2 hours'))",
+            params=('/in/stale_locked.mp4', '/out/stale_locked.mp4'),
+        )
+        rows = dm.db_manager.execute_query(
+            "SELECT id FROM conversion_tasks WHERE input_path='/in/stale_locked.mp4'",
+            fetch=True,
+        )
+        task_id = rows[0]['id']
+
+        repo = self._repo()
+        cleaned = repo.cleanup_stale_tasks(stale_hours=1)
+        self.assertGreaterEqual(cleaned, 1)
+
+        rows = dm.db_manager.execute_query(
+            "SELECT status FROM conversion_tasks WHERE id=%s",
+            params=(task_id,), fetch=True,
+        )
+        self.assertEqual(rows[0]['status'], 'failed')
+
+
+# ---------------------------------------------------------------------------
+# update_task_status — deadlock retry
+# ---------------------------------------------------------------------------
+
+class TestUpdateTaskStatusDeadlockRetry(unittest.TestCase):
+    """update_task_status() deadlock retry 路徑測試"""
+
+    @patch('task_manager.time.sleep')
+    @patch('task_manager.db_manager')
+    def test_retry_succeeds_on_second_attempt(self, mock_db, mock_sleep):
+        """第一次 deadlock，第二次成功 → 函式正常回傳，無例外"""
+        from task_manager import TaskRepository
+        deadlock_exc = Exception("1213 (40001): Deadlock found when trying to get lock")
+        mock_db.execute_query.side_effect = [deadlock_exc, None]
+
+        mock_logger = MagicMock()
+        repo = TaskRepository()
+        repo._logger = mock_logger
+        repo.update_task_status(42, 'completed')  # 不應拋出例外
+
+        self.assertEqual(mock_db.execute_query.call_count, 2)
+        mock_sleep.assert_called_once()
+        mock_logger.warning.assert_called_once()
+        mock_logger.error.assert_not_called()
+
+    @patch('task_manager.time.sleep')
+    @patch('task_manager.db_manager')
+    def test_all_retries_exhausted_logs_error_no_raise(self, mock_db, mock_sleep):
+        """三次全部 deadlock → 記錄 error，不拋出例外（靜默失敗）"""
+        from task_manager import TaskRepository
+        deadlock_exc = Exception("1213 (40001): Deadlock found when trying to get lock")
+        mock_db.execute_query.side_effect = [deadlock_exc, deadlock_exc, deadlock_exc]
+
+        mock_logger = MagicMock()
+        repo = TaskRepository()
+        repo._logger = mock_logger
+        repo.update_task_status(42, 'failed')  # 不應拋出例外
+
+        self.assertEqual(mock_db.execute_query.call_count, 3)
+        self.assertEqual(mock_sleep.call_count, 2)  # retry 前 sleep，第 3 次後不 sleep
+        mock_logger.error.assert_called_once()
+
+    @patch('task_manager.time.sleep')
+    @patch('task_manager.db_manager')
+    def test_non_deadlock_raises_immediately_no_retry(self, mock_db, mock_sleep):
+        """非 deadlock 例外應在第一次即靜默失敗，不 sleep，不 retry"""
+        from task_manager import TaskRepository
+        mock_db.execute_query.side_effect = Exception("2006 (HY000): MySQL server has gone away")
+
+        mock_logger = MagicMock()
+        repo = TaskRepository()
+        repo._logger = mock_logger
+        repo.update_task_status(42, 'completed')
+
+        self.assertEqual(mock_db.execute_query.call_count, 1)
+        mock_sleep.assert_not_called()
+        mock_logger.error.assert_called_once()
+
 
 if __name__ == '__main__':
     unittest.main()
