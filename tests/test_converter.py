@@ -492,9 +492,10 @@ class TestConvertTo480pEdgePaths(unittest.TestCase):
             except OSError:
                 pass
 
+    @patch('converter.time.sleep')  # 讓 watchdog 的 sleep(2) 不阻塞測試
     @patch('converter.get_video_duration_and_bitrate', return_value=(100.0, 0))
     @patch('converter.subprocess.Popen')
-    def test_absolute_timeout_kills_ffmpeg(self, mock_popen, _):
+    def test_absolute_timeout_kills_ffmpeg(self, mock_popen, _, mock_sleep):
         """ffmpeg_timeout 到期後應殺掉 ffmpeg 並回傳 (False, 含 'absolute timeout' 的訊息)"""
         import os as _os
         r_fd, w_fd = _os.pipe()
@@ -526,10 +527,7 @@ class TestConvertTo480pEdgePaths(unittest.TestCase):
     @patch('converter.subprocess.Popen')
     def test_stderr_loop_exception_kills_ffmpeg_returns_false(self, mock_popen, _):
         """stderr 讀取迴圈內發生例外時應 kill ffmpeg 並回傳 (False, <error>)"""
-        import os as _os
-        r_fd, w_fd = _os.pipe()
-        self._fds_to_close.append(r_fd)
-
+        # 不需要真實 pipe：fileno() 直接拋出例外，不會進入 select() 迴圈
         mock_proc = MagicMock()
         mock_proc.returncode = None
         mock_proc.poll.return_value = None
