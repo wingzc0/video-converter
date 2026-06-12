@@ -5,9 +5,15 @@ process_daemon 與 conv_admin 共用的 DB 操作集中在此，
 避免在多處維護相同的 SQL 邏輯。
 """
 import logging
+import time
 from datetime import datetime, timedelta
 
 from db_manager import db_manager
+
+# MariaDB error 1213: Deadlock found when trying to get lock
+_MARIADB_DEADLOCK_ERRNO = 1213
+_DEADLOCK_MAX_RETRIES = 3
+_DEADLOCK_RETRY_BASE_DELAY = 0.2  # seconds; exponential backoff: 0.2, 0.4, 0.8
 
 
 class TaskRepository:
@@ -259,7 +265,25 @@ class TaskRepository:
 
             query = f"UPDATE conversion_tasks SET {', '.join(updates)} WHERE id = %s"
             params.append(task_id)
-            db_manager.execute_query(query, tuple(params))
+
+            # Retry on MariaDB deadlock (errno 1213) with exponential backoff.
+            # Deadlocks are transient; MariaDB recommends application-level retry.
+            for attempt in range(_DEADLOCK_MAX_RETRIES):
+                try:
+                    db_manager.execute_query(query, tuple(params))
+                    return
+                except Exception as e:
+                    is_deadlock = str(_MARIADB_DEADLOCK_ERRNO) in str(e)
+                    if is_deadlock and attempt < _DEADLOCK_MAX_RETRIES - 1:
+                        delay = _DEADLOCK_RETRY_BASE_DELAY * (2 ** attempt)
+                        self._logger.warning(
+                            f"Deadlock on update_task_status task {task_id} "
+                            f"(attempt {attempt + 1}/{_DEADLOCK_MAX_RETRIES}), "
+                            f"retrying in {delay:.1f}s"
+                        )
+                        time.sleep(delay)
+                    else:
+                        raise
 
         except Exception as e:
             self._logger.error(f"Error updating task status: {str(e)}")
@@ -355,13 +379,17 @@ class TaskRepository:
             return 0
 
     def cleanup_stale_tasks(self, stale_hours=1):
-        """將卡在 processing 超過 stale_hours 的任務標記為 failed，回傳清理數量"""
+        """將卡在 processing 超過 stale_hours 的任務標記為 failed，回傳清理數量。
+
+        涵蓋兩種孤兒情形：
+        - is_processing=TRUE：worker 崩潰，鎖未釋放
+        - is_processing=FALSE：鎖已釋放但 update_task_status 失敗（例如 deadlock 耗盡 retry）
+        """
         try:
             stale_time = datetime.now() - timedelta(hours=stale_hours)
             stale_tasks = db_manager.execute_query(
                 '''SELECT id FROM conversion_tasks
                    WHERE status = 'processing'
-                   AND is_processing = TRUE
                    AND COALESCE(start_time, updated_at, created_at) < %s''',
                 (stale_time.strftime('%Y-%m-%d %H:%M:%S'),), fetch=True
             )
@@ -380,7 +408,7 @@ class TaskRepository:
                                 is_processing = FALSE,
                                 error_message = %s,
                                 end_time = CURRENT_TIMESTAMP
-                            WHERE id = %s AND status = 'processing' AND is_processing = TRUE''',
+                            WHERE id = %s AND status = 'processing' ''',
                          (f"Task marked as stale after {stale_hours}h (was processing)", task_id)),
                         ("DELETE FROM processing_lock WHERE task_id = %s", (task_id,)),
                     ])

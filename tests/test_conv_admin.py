@@ -113,7 +113,8 @@ class TestCmdCleanupStale(unittest.TestCase):
         update_query = queries[0][0]
         self.assertIn('failed', update_query.lower())
         self.assertIn("status = 'processing'", update_query)
-        self.assertIn("is_processing = TRUE", update_query)
+        # is_processing=TRUE 條件已移除：cleanup 現在也涵蓋 is_processing=FALSE 的孤兒任務
+        self.assertNotIn("is_processing = TRUE", update_query)
         self.assertIn('processing_lock', queries[1][0].lower())
 
     def test_toctou_completed_task_not_counted(self):
